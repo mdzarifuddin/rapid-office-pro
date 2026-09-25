@@ -50,8 +50,10 @@
             android:id="@+id/title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:ellipsize="middle"
-            android:maxLines="1"
+            android:breakStrategy="balanced"
+            android:ellipsize="end"
+            android:hyphenationFrequency="normal"
+            android:maxLines="3"
             android:textAppearance="@style/TextAppearance.Material3.BodyLarge" />
 
         <TextView

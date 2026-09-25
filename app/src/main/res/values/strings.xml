@@ -7,10 +7,16 @@
     <string name="tab_folders">Folders</string>
     <string name="tab_favourites">Favorite</string>
     <string name="tab_device">Phone</string>
-    <string name="device_scanning">Looking through the phone and memory card…</string>
-    <string name="device_found">%1$d documents on this phone and memory card</string>
-    <string name="empty_device">No documents found</string>
-    <string name="empty_device_detail">Nothing this app can open was found on the phone or the memory card.</string>
+    <string name="empty_device">Nothing here</string>
+    <string name="empty_device_detail">This folder has no documents this app can open.</string>
+    <string name="storage_internal">Internal storage</string>
+    <string name="storage_card">Memory card</string>
+    <string name="storage_free">%1$s free</string>
+    <string name="browse_storages">Phone and memory card</string>
+    <plurals name="folder_items">
+        <item quantity="one">%d item</item>
+        <item quantity="other">%d items</item>
+    </plurals>
     <string name="access_title">Allow access to your files</string>
     <string name="access_message">To find every PDF and document on your phone and memory card, and to reopen them from your history, turn on \"All files access\" for this app on the next screen.</string>
     <string name="access_allow">Allow</string>

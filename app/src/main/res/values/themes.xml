@@ -41,15 +41,15 @@
     <style name="ReaderBarButton">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:minWidth">50dp</item>
+        <item name="android:minWidth">48dp</item>
         <item name="android:orientation">vertical</item>
         <item name="android:gravity">center_horizontal</item>
         <item name="android:clickable">true</item>
         <item name="android:focusable">true</item>
         <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
-        <item name="android:paddingTop">5dp</item>
-        <item name="android:paddingHorizontal">2dp</item>
-        <item name="android:paddingBottom">3dp</item>
+        <item name="android:paddingTop">6dp</item>
+        <item name="android:paddingHorizontal">4dp</item>
+        <item name="android:paddingBottom">4dp</item>
     </style>
 
     <!-- A brush-bar tool: the row shares its width out evenly, so it fits any phone unscrolled. -->
@@ -69,16 +69,18 @@
     </style>
 
     <style name="ReaderBarIcon">
-        <item name="android:layout_width">23dp</item>
-        <item name="android:layout_height">23dp</item>
+        <!-- Thin outlined symbols read best a touch smaller than the old filled ones. -->
+        <item name="android:layout_width">21dp</item>
+        <item name="android:layout_height">21dp</item>
         <item name="android:duplicateParentState">true</item>
     </style>
 
     <style name="ReaderBarLabel">
         <item name="android:layout_width">wrap_content</item>
         <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_marginTop">3dp</item>
-        <item name="android:textSize">9sp</item>
+        <item name="android:layout_marginTop">2dp</item>
+        <item name="android:textSize">9.5sp</item>
+        <item name="android:letterSpacing">0.02</item>
         <item name="android:maxLines">1</item>
         <item name="android:textColor">#D9FFFFFF</item>
         <item name="android:duplicateParentState">true</item>

@@ -115,6 +115,7 @@ class ReaderActivity : AppCompatActivity() {
         binding.toolbar.setNavigationOnClickListener { confirmClose() }
 
         applyWindowInsets()
+        BarSizing.attach(binding.bottomScroll, binding.bottomBar)
         wireReaderCallbacks()
         orientationMode = Settings.get(this).orientationMode
         applyOrientation()
@@ -229,7 +230,6 @@ class ReaderActivity : AppCompatActivity() {
         binding.toolContentsButton.setOnClickListener { showOutline() }
         binding.toolThumbnailsButton.setOnClickListener { showThumbnails() }
         binding.toolEditButton.setOnClickListener { enterEditMode(binding.pdfView.currentPage) }
-        binding.toolBrushButton.setOnClickListener { enterDrawMode() }
         binding.toolColourButton.setOnClickListener { chooseColourMode() }
         binding.viewModeButton.setOnClickListener { chooseViewMode() }
         // The page pill is the quickest route to both "go somewhere" and "remember this".
@@ -1735,16 +1735,55 @@ class ReaderActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * Each way of reading shown with the same icon the View button wears for it, so the button
+     * and the choice read as one thing; the one in use is ticked.
+     */
     private fun chooseViewMode() {
-        val labels = arrayOf(
-            getString(R.string.view_mode_vertical),
-            getString(R.string.view_mode_horizontal),
-            getString(R.string.view_mode_dual),
+        val choices = listOf(
+            Triple(ViewMode.VERTICAL, R.string.view_mode_vertical, R.drawable.ic_view_day),
+            Triple(ViewMode.HORIZONTAL, R.string.view_mode_horizontal, R.drawable.ic_menu_book),
+            Triple(ViewMode.DUAL, R.string.view_mode_dual, R.drawable.ic_view_column),
         )
+        val current = binding.pdfView.viewMode
+        val density = resources.displayMetrics.density
+        val textColour = com.google.android.material.color.MaterialColors.getColor(
+            binding.root, com.google.android.material.R.attr.colorOnSurface,
+        )
+        val accent = com.google.android.material.color.MaterialColors.getColor(
+            binding.root, androidx.appcompat.R.attr.colorPrimary,
+        )
+        val adapter = object : android.widget.BaseAdapter() {
+            override fun getCount() = choices.size
+            override fun getItem(position: Int) = choices[position]
+            override fun getItemId(position: Int) = position.toLong()
+            override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View {
+                val (mode, label, icon) = choices[position]
+                val selected = mode == current
+                val tint = if (selected) accent else textColour
+                fun drawable(res: Int) = androidx.core.content.ContextCompat.getDrawable(this@ReaderActivity, res)
+                    ?.mutate()?.apply { setTint(tint) }
+                return (convertView as? android.widget.TextView ?: android.widget.TextView(this@ReaderActivity)).apply {
+                    text = getString(label)
+                    setTextColor(tint)
+                    textSize = 16f
+                    minHeight = (56 * density).toInt()
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    setPadding((24 * density).toInt(), 0, (24 * density).toInt(), 0)
+                    compoundDrawablePadding = (20 * density).toInt()
+                    setCompoundDrawablesRelativeWithIntrinsicBounds(
+                        drawable(icon),
+                        null,
+                        if (selected) drawable(R.drawable.ic_check) else null,
+                        null,
+                    )
+                }
+            }
+        }
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.action_view_mode)
-            .setSingleChoiceItems(labels, binding.pdfView.viewMode.ordinal) { dialog, which ->
-                binding.pdfView.viewMode = ViewMode.entries[which]
+            .setAdapter(adapter) { dialog, which ->
+                binding.pdfView.viewMode = choices[which].first
                 updateViewModeIcon()
                 updateZoomLabel()
                 dialog.dismiss()

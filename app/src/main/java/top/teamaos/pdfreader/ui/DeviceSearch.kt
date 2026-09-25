@@ -44,9 +44,6 @@ object DeviceSearch {
         return find(context, needle, limit)
     }
 
-    /** Every document on the phone and any memory card, newest first, for the Phone tab. */
-    suspend fun everything(context: Context, limit: Int = 3000): List<FoundFile> = find(context, "", limit)
-
     /** An empty [needle] matches every supported file. */
     private suspend fun find(context: Context, needle: String, limit: Int): List<FoundFile> {
         val found = LinkedHashMap<String, FoundFile>()

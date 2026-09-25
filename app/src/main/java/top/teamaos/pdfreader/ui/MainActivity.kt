@@ -5,11 +5,11 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.SystemClock
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -17,6 +17,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.ConcatAdapter
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.tabs.TabLayout
@@ -53,10 +54,16 @@ class MainActivity : AppCompatActivity() {
     private var deviceSearchJob: Job? = null
     private var searchRunning = false
 
-    /** Everything on the phone for the Phone tab, found once per visit to this screen. */
-    private var deviceDocuments: List<DocumentRecord>? = null
-    private var deviceListJob: Job? = null
-    private var deviceListedAt = 0L
+    /** The Phone tab's folders; its documents go through [adapter] like every other list. */
+    private val folderAdapter = FolderAdapter { entry -> openFolder(entry) }
+
+    /** The folder the Phone tab is showing, or null for the list of storages. */
+    private var browseDir: java.io.File? = null
+    private var folderJob: Job? = null
+    private var folderLoading = false
+
+    /** Recent and favourite together: what the search box looks through, whichever tab is open. */
+    private var history: List<DocumentRecord> = emptyList()
 
     /** Asked at most once per launch; the switch itself lives on the system settings screen. */
     private var askedForAccess = false
@@ -77,7 +84,7 @@ class MainActivity : AppCompatActivity() {
         applyWindowInsets()
 
         binding.documentList.layoutManager = LinearLayoutManager(this)
-        binding.documentList.adapter = adapter
+        binding.documentList.adapter = ConcatAdapter(folderAdapter, adapter)
         binding.openFab.setOnClickListener { pickDocument.launch(SUPPORTED_MIME_TYPES) }
         binding.settingsButton.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
@@ -94,12 +101,28 @@ class MainActivity : AppCompatActivity() {
 
         clearLeftovers()
 
+        // In the file browser, Back climbs one folder before it leaves the app.
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val dir = browseDir
+                if (browsing() && dir != null) {
+                    openFolder(upEntry(dir))
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                    isEnabled = true
+                }
+            }
+        })
+
         binding.searchField.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
             override fun afterTextChanged(s: Editable?) {
+                val wasSearching = query.isNotBlank()
                 query = s?.toString().orEmpty()
-                applyFilter()
+                // Back from a search on the Phone tab: put the folder that was open back.
+                if (wasSearching && browsing()) loadFolder(browseDir) else applyFilter()
                 startDeviceSearch(query)
             }
         })
@@ -138,10 +161,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (StorageAccess.hasAllFilesAccess(this) && !hadAccess) {
-            // Just switched on in settings: what the Phone tab saw before was only a fraction.
-            deviceDocuments = null
-        }
         hadAccess = StorageAccess.hasAllFilesAccess(this)
         refresh()
         Updater.resumePendingInstall(this)
@@ -188,84 +207,156 @@ class MainActivity : AppCompatActivity() {
 
     private fun onAccessGranted() {
         hadAccess = true
-        deviceDocuments = null
         refresh()
     }
 
     private fun refresh() {
-        if (binding.tabs.selectedTabPosition == TAB_DEVICE) {
-            loadDeviceDocuments()
-            return
-        }
         lifecycleScope.launch {
             val database = ReaderDatabase.get(applicationContext)
-            loaded = if (binding.tabs.selectedTabPosition == TAB_FAVOURITES) {
-                database.favouriteDocuments()
-            } else {
-                database.recentDocuments()
+            val recent = database.recentDocuments()
+            val favourites = database.favouriteDocuments()
+            history = (recent + favourites).distinctBy { it.id }
+            loaded = when (binding.tabs.selectedTabPosition) {
+                TAB_FAVOURITES -> favourites
+                TAB_RECENT -> recent
+                else -> loaded
             }
+            if (binding.tabs.selectedTabPosition == TAB_DEVICE) loadFolder(browseDir) else applyFilter()
+        }
+    }
+
+    /** The Phone tab with nothing typed: a file manager, folder by folder. */
+    private fun browsing(): Boolean = binding.tabs.selectedTabPosition == TAB_DEVICE && query.isBlank()
+
+    private fun openFolder(entry: FolderEntry) {
+        browseDir = if (entry.isUp && isRoot(entry.dir)) null else entry.dir
+        loadFolder(browseDir)
+        binding.documentList.scrollToPosition(0)
+    }
+
+    /** The row that climbs out of [dir]: to its parent, or to the storages list from a root. */
+    private fun upEntry(dir: java.io.File) = FolderEntry(
+        dir = if (isRoot(dir)) dir else (dir.parentFile ?: dir),
+        name = "..",
+        detail = null,
+        isUp = true,
+    )
+
+    private fun isRoot(dir: java.io.File): Boolean {
+        val path = runCatching { dir.canonicalPath }.getOrDefault(dir.absolutePath)
+        return StorageAccess.storageRoots(this).any {
+            runCatching { it.canonicalPath }.getOrDefault(it.absolutePath) == path
+        }
+    }
+
+    /**
+     * List one folder: its subfolders first, then the documents this app can open, both by name.
+     * Documents already read come with their history entry, so their progress bar and star show.
+     * Hidden folders and ones with nothing but app data in them are left out, as file managers do.
+     */
+    private fun loadFolder(dir: java.io.File?) {
+        folderJob?.cancel()
+        folderLoading = true
+        applyFilter()
+        folderJob = lifecycleScope.launch {
+            val known = history
+            val (folders, documents) = withContext(Dispatchers.IO) {
+                if (dir == null) {
+                    storageEntries() to emptyList()
+                } else {
+                    val children = dir.listFiles().orEmpty().filterNot { it.name.startsWith(".") }
+                    val folders = children.filter { it.isDirectory }
+                        .sortedBy { it.name.lowercase() }
+                        .map { folder ->
+                            val count = folder.list()?.count { !it.startsWith(".") } ?: 0
+                            FolderEntry(folder, folder.name, resources.getQuantityString(R.plurals.folder_items, count, count))
+                        }
+                    val byKey = known.associateBy { fileKey(it.uri) }
+                    val documents = children.filter { it.isFile && isOpenable(it.name) }
+                        .sortedBy { it.name.lowercase() }
+                        .map { file ->
+                            val found = FoundFile(file.name, file.absolutePath, file.length(), file.lastModified())
+                            byKey[fileKey(found.uri.toString())] ?: found.toRecord()
+                        }
+                    (listOf(upEntry(dir)) + folders) to documents
+                }
+            }
+            folderLoading = false
+            if (!browsing() || browseDir != dir) return@launch
+            folderAdapter.submitList(folders)
+            loaded = documents
             applyFilter()
         }
     }
 
-    /**
-     * Every document on the phone and memory card, no typing needed. Files already read show
-     * their history entry, so their progress bar and star come along. The list from earlier in
-     * this visit shows at once and is refreshed behind it.
-     */
-    private fun loadDeviceDocuments() {
-        loaded = deviceDocuments.orEmpty()
-        applyFilter()
-        if (deviceListJob?.isActive == true) return
-        // Walking the storage is the costly part; coming back from a document a moment later
-        // does not need it done again.
-        val fresh = deviceDocuments != null &&
-            SystemClock.elapsedRealtime() - deviceListedAt < DEVICE_LIST_FRESH_MS
-        if (fresh) return
-        deviceListJob = lifecycleScope.launch {
-            val history = ReaderDatabase.get(applicationContext).recentDocuments(limit = 1000)
-            val found = DeviceSearch.everything(applicationContext)
-            val records = withContext(Dispatchers.IO) {
-                val known = history.associateBy { fileKey(it.uri) }
-                found.map { file -> known[fileKey(file.uri.toString())] ?: file.toRecord() }
-            }
-            deviceDocuments = records
-            deviceListedAt = SystemClock.elapsedRealtime()
-            if (binding.tabs.selectedTabPosition == TAB_DEVICE) {
-                loaded = records
-                applyFilter()
-            }
+    /** The top of the browser: built-in storage and any memory card, named the way the phone names them. */
+    private fun storageEntries(): List<FolderEntry> {
+        val manager = getSystemService(android.os.storage.StorageManager::class.java)
+        return StorageAccess.storageRoots(this).mapIndexed { index, root ->
+            val described = runCatching { manager?.getStorageVolume(root)?.getDescription(this) }.getOrNull()
+            val name = described?.takeIf { it.isNotBlank() }
+                ?: getString(if (index == 0) R.string.storage_internal else R.string.storage_card)
+            val free = runCatching { android.text.format.Formatter.formatShortFileSize(this, root.freeSpace) }
+                .getOrNull()
+            FolderEntry(root, name, free?.let { getString(R.string.storage_free, it) })
         }
     }
 
+    private fun isOpenable(name: String): Boolean =
+        name.endsWith(".pdf", ignoreCase = true) || OfficeFormats.isOffice(name)
+
+    /** Where the browser is, as a trail: "Internal storage › Download › Books". */
+    private fun breadcrumb(dir: java.io.File?): String {
+        if (dir == null) return getString(R.string.browse_storages)
+        val path = runCatching { dir.canonicalPath }.getOrDefault(dir.absolutePath)
+        val roots = storageEntries()
+        val root = roots.firstOrNull {
+            val rootPath = runCatching { it.dir.canonicalPath }.getOrDefault(it.dir.absolutePath)
+            path == rootPath || path.startsWith("$rootPath/")
+        } ?: return path
+        val rootPath = runCatching { root.dir.canonicalPath }.getOrDefault(root.dir.absolutePath)
+        val rest = path.removePrefix(rootPath).trim('/').split('/').filter { it.isNotEmpty() }
+        return (listOf(root.name) + rest).joinToString("  ›  ")
+    }
+
     /**
-     * Show what matches: what has been opened before first, then everything else on the phone.
+     * Show what matches.
      *
-     * Files already in the history come first because a name someone half-remembers is usually a
-     * file they have read. Anything found on storage is appended, with the ones already listed
-     * left out so a file does not appear twice.
+     * With something typed, the search is the same whichever tab is open: everything read before
+     * or starred comes first — a name someone half-remembers is usually a file they have read —
+     * then everything else on the phone and the memory card, without anything listed twice.
      */
     private fun applyFilter() {
         val searching = query.isNotBlank()
+        val onDevice = binding.tabs.selectedTabPosition == TAB_DEVICE
+        if (!browsing()) folderAdapter.submitList(emptyList())
+
         val fromHistory = if (!searching) {
             loaded
         } else {
-            loaded.filter { it.displayName.contains(query, ignoreCase = true) }
+            history.filter { it.displayName.contains(query, ignoreCase = true) }
         }
         // Matched by the file they point at, not by the text of the URI: history records a file
         // as /sdcard/..., storage reports it as /storage/emulated/0/..., and the same file would
         // otherwise be listed twice.
         val known = fromHistory.map { fileKey(it.uri) }.toHashSet()
         val fromDevice = if (!searching) emptyList() else deviceResults.filter { fileKey(it.uri) !in known }
-        adapter.submitList(fromHistory + fromDevice)
+        if (searching) {
+            // PDFs first — they are what this app is mostly for — keeping read-before files ahead
+            // within each kind. Then back to the top: results landing above the first visible row
+            // used to leave the list scrolled down, with the best matches out of sight.
+            val results = (fromHistory + fromDevice).sortedBy { !it.displayName.endsWith(".pdf", ignoreCase = true) }
+            adapter.submitList(results) { binding.documentList.scrollToPosition(0) }
+        } else {
+            adapter.submitList(fromHistory + fromDevice)
+        }
 
-        val onDevice = binding.tabs.selectedTabPosition == TAB_DEVICE
         binding.searchStatus.visibility = if (searching || onDevice) View.VISIBLE else View.GONE
-        if (onDevice && !searching) {
-            binding.searchStatus.text = when {
-                !StorageAccess.hasAllFilesAccess(this) -> getString(R.string.access_needed)
-                deviceDocuments == null -> getString(R.string.device_scanning)
-                else -> getString(R.string.device_found, fromHistory.size)
+        if (browsing()) {
+            binding.searchStatus.text = if (!StorageAccess.hasAllFilesAccess(this)) {
+                getString(R.string.access_needed)
+            } else {
+                breadcrumb(browseDir)
             }
         }
         if (searching) {
@@ -279,9 +370,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         val favourites = binding.tabs.selectedTabPosition == TAB_FAVOURITES
-        val empty = fromHistory.isEmpty() && fromDevice.isEmpty()
-        val stillScanning = onDevice && deviceDocuments == null
-        binding.emptyView.visibility = if (empty && !searching && !stillScanning) View.VISIBLE else View.GONE
+        val empty = fromHistory.isEmpty() && fromDevice.isEmpty() &&
+            (!browsing() || folderAdapter.itemCount == 0)
+        val stillLoading = browsing() && folderLoading
+        binding.emptyView.visibility = if (empty && !searching && !stillLoading) View.VISIBLE else View.GONE
         binding.emptyTitle.setText(
             when {
                 onDevice -> R.string.empty_device
@@ -457,10 +549,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private companion object {
+        const val TAB_RECENT = 0
         const val TAB_FAVOURITES = 1
         const val TAB_DEVICE = 2
         const val LEFTOVER_AGE_MS = 30L * 60L * 1000L
-        const val DEVICE_LIST_FRESH_MS = 60_000L
         const val UPDATE_CHECK_INTERVAL_MS = 24L * 60L * 60L * 1000L
 
         /** Below this the whole phone would match, so only the history is filtered. */

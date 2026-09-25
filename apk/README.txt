@@ -1,7 +1,7 @@
-Rapid Office Pro — build v2.4
+Rapid Office Pro — build v2.5
 =============================
 
-RapidOfficePro-v2.4.apk  — signed release build. Install this on your phone.
+RapidOfficePro-v2.5.apk  — signed release build. Install this on your phone.
 
 This is the same app as Rapid PDF, renamed, because it is no longer only a PDF reader:
 Word, Excel, PowerPoint, CSV and text files now open in it too. It installs straight over
@@ -119,6 +119,26 @@ up front.
 Office files are measured once when opened and never again — zooming is a matrix, not a
 re-layout — so a Word file stays sharp at any zoom without re-rendering anything.
 
+
+New in v2.5
+-----------
+- The Phone tab is a file manager. It opens on the phone's storage and the memory card (with free
+  space shown). Tap a folder to go into it, and ".." or Back to go up. The path is shown at the top
+  (Internal storage › Download › Books). Each folder lists its subfolders first, then the documents
+  the app can open.
+- The search box at the top looks everywhere, whichever tab is open: Recent, Favorite and the whole
+  phone and memory card. Files you have read come first.
+- The bottom bar is one row again. In landscape every button shows. In portrait the first five show
+  and the rest swipe in from the right; a sliver of the next button shows that there is more.
+- The zoom slider is slimmer.
+- Brush is no longer on the bottom bar; it is under Edit, next to the page tools.
+- Search results start at the top with PDFs first. The list no longer lands scrolled down when many
+  results come in.
+- Long document names wrap onto up to three lines instead of being cut to one; folder names get two.
+- New icons everywhere: Google's Material Symbols, outlined and light, the thin and precise style of
+  Google's own apps. The bar buttons are slightly more compact to match.
+- View shows each choice with its icon (continuous, page by page, two pages) and ticks the one in
+  use.
 
 New in v2.4
 -----------

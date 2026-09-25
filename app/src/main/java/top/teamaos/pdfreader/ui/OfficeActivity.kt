@@ -90,6 +90,7 @@ class OfficeActivity : AppCompatActivity() {
         binding.toolbar.setNavigationOnClickListener { finish() }
 
         applyWindowInsets()
+        BarSizing.attach(binding.bottomScroll, binding.bottomBar)
         wireCallbacks()
         orientationMode = Settings.get(this).orientationMode
         applyOrientation()

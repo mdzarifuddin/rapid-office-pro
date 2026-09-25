@@ -139,11 +139,14 @@
         <com.google.android.material.slider.Slider
             android:id="@+id/zoomSlider"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="32dp"
             android:stepSize="0"
             android:valueFrom="-2.0"
             android:valueTo="3.0"
-            app:labelBehavior="gone" />
+            app:haloRadius="12dp"
+            app:labelBehavior="gone"
+            app:thumbRadius="6dp"
+            app:trackHeight="2dp" />
 
         <LinearLayout
             android:layout_width="wrap_content"
@@ -224,58 +227,62 @@
         android:paddingTop="7dp"
         android:paddingBottom="3dp">
 
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <!-- "7 / 56" alone did not say what it counted; the small word under it does. -->
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:gravity="center_horizontal"
-                android:orientation="vertical">
-
-                <TextView
-                    android:id="@+id/pageIndicator"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:background="@drawable/bg_page_pill"
-                    android:maxLines="1"
-                    android:paddingHorizontal="11dp"
-                    android:paddingVertical="4dp"
-                    android:textAppearance="@style/TextAppearance.Material3.LabelMedium"
-                    android:textColor="#FFFFFFFF" />
-
-                <TextView
-                    style="@style/ReaderBarLabel"
-                    android:text="@string/label_page" />
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/statusText"
-                android:visibility="gone"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginHorizontal="6dp"
-                android:alpha="0.75"
-                android:maxLines="1"
-                android:textAppearance="@style/TextAppearance.Material3.LabelSmall"
-                android:textColor="#FFFFFFFF" />
-        </LinearLayout>
-
+        <!-- One row. In landscape it is wide enough for every button; in portrait the reader
+             sizes it to the first five plus a sliver of the sixth, and the rest swipe in. -->
         <HorizontalScrollView
+            android:id="@+id/bottomScroll"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:overScrollMode="never"
             android:scrollbars="none">
 
             <LinearLayout
+                android:id="@+id/bottomBar"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <!-- "7 / 56" alone did not say what it counted; the small word under it does. -->
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_horizontal"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/pageIndicator"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:background="@drawable/bg_page_pill"
+                            android:maxLines="1"
+                            android:paddingHorizontal="11dp"
+                            android:paddingVertical="4dp"
+                            android:textAppearance="@style/TextAppearance.Material3.LabelMedium"
+                            android:textColor="#FFFFFFFF" />
+
+                        <TextView
+                            style="@style/ReaderBarLabel"
+                            android:text="@string/label_page" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/statusText"
+                        android:visibility="gone"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginHorizontal="6dp"
+                        android:alpha="0.75"
+                        android:maxLines="1"
+                        android:textAppearance="@style/TextAppearance.Material3.LabelSmall"
+                        android:textColor="#FFFFFFFF" />
+                </LinearLayout>
 
                 <LinearLayout
                     android:id="@+id/zoomButton"
@@ -326,25 +333,6 @@
                         android:text="@string/label_screen" />
                 </LinearLayout>
 
-            </LinearLayout>
-        </HorizontalScrollView>
-
-        <!-- Second row: the reading tools, each with its name under it. A row of their own keeps
-             the page number and view controls from being pushed off the side, and the row scrolls
-             sideways on a narrow phone rather than squeezing the labels. -->
-        <HorizontalScrollView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:overScrollMode="never"
-            android:scrollbars="none">
-
-            <LinearLayout
-                android:id="@+id/toolRow"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
 
                 <LinearLayout
                     android:id="@+id/toolColourButton"

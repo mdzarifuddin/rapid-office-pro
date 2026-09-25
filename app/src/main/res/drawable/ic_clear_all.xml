@@ -1,6 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Material Symbols Outlined "delete_sweep", weight 300. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp" android:height="24dp"
-    android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="@android:color/white"
-        android:pathData="M6,19c0,1.1 0.9,2 2,2h8c1.1,0 2,-0.9 2,-2V7H6V19zM19,4h-3.5l-1,-1h-5l-1,1H5v2h14V4z" />
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <group android:translateY="960">
+        <path
+            android:fillColor="@android:color/white"
+            android:pathData="M597.69-250v-60h140v60h-140Zm0-320v-60h260v60h-260Zm0 160v-60h220v60h-220ZM142.31-640h-40v-60h154.61v-47.69h130.77V-700h154.62v60h-40v347.69q0 30.31-21 51.31-21 21-51.31 21H214.62q-30.31 0-51.31-21-21-21-21-51.31V-640Zm60 0v347.69q0 4.62 3.84 8.46Q210-280 214.62-280H430q4.61 0 8.46-3.85 3.85-3.84 3.85-8.46V-640h-240Zm0 0v360-360Z" />
+    </group>
 </vector>

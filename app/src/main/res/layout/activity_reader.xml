@@ -128,7 +128,10 @@
         android:paddingTop="4dp"
         android:paddingBottom="3dp">
 
+        <!-- One row. In landscape it is wide enough for every button; in portrait the reader
+             sizes it to the first five plus a sliver of the sixth, and the rest swipe in. -->
         <HorizontalScrollView
+            android:id="@+id/bottomScroll"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:overScrollMode="never"
@@ -246,25 +249,6 @@
                         android:text="@string/label_lock" />
                 </LinearLayout>
 
-            </LinearLayout>
-        </HorizontalScrollView>
-
-        <!-- Second row: the reading tools, each with its name under it. A row of their own keeps
-             the page number and view controls from being pushed off the side, and the row scrolls
-             sideways on a narrow phone rather than squeezing the labels. -->
-        <HorizontalScrollView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:overScrollMode="never"
-            android:scrollbars="none">
-
-            <LinearLayout
-                android:id="@+id/toolRow"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
 
                 <LinearLayout
                     android:id="@+id/toolContentsButton"
@@ -314,21 +298,6 @@
                         android:text="@string/label_edit" />
                 </LinearLayout>
 
-                <LinearLayout
-                    android:id="@+id/toolBrushButton"
-                    style="@style/ReaderBarButton"
-                    android:contentDescription="@string/action_draw">
-
-                    <ImageView
-                        style="@style/ReaderBarIcon"
-                        android:contentDescription="@null"
-                        android:src="@drawable/ic_brush"
-                        app:tint="#FFFFFFFF" />
-
-                    <TextView
-                        style="@style/ReaderBarLabel"
-                        android:text="@string/label_brush" />
-                </LinearLayout>
 
                 <LinearLayout
                     android:id="@+id/toolColourButton"
@@ -595,11 +564,14 @@
         <com.google.android.material.slider.Slider
             android:id="@+id/zoomSlider"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="32dp"
             android:stepSize="0"
             android:valueFrom="-2.0"
             android:valueTo="3.0"
-            app:labelBehavior="gone" />
+            app:haloRadius="12dp"
+            app:labelBehavior="gone"
+            app:thumbRadius="6dp"
+            app:trackHeight="2dp" />
 
         <LinearLayout
             android:layout_width="wrap_content"
