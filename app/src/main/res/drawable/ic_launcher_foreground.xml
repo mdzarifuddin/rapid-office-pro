@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A page with its corner turned, and the bolt the app is named for. Everything stays inside the
+  centre 72dp: an adaptive icon can be masked to a circle, and anything wider than that loses its
+  edges on the launchers that do.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- The sheet's own shadow, so it lifts off the background rather than lying flat on it. -->
+    <path
+        android:fillAlpha="0.18"
+        android:fillColor="#FF000000"
+        android:pathData="M40,30 h24 l13,13 v38 a6,6 0 0 1 -6,6 h-31 a6,6 0 0 1 -6,-6 v-45 a6,6 0 0 1 6,-6 z" />
+
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M38,27 h24 l13,13 v38 a6,6 0 0 1 -6,6 h-31 a6,6 0 0 1 -6,-6 v-45 a6,6 0 0 1 6,-6 z" />
+
+    <!-- The turned corner. -->
+    <path
+        android:fillColor="#FFB9D2F0"
+        android:pathData="M62,27 l13,13 h-9 a4,4 0 0 1 -4,-4 z" />
+
+    <path
+        android:fillColor="#FF2478C8"
+        android:fillAlpha="0.35"
+        android:pathData="M42,50 h20 v3.4 h-20 z M42,58 h26 v3.4 h-26 z M42,66 h14 v3.4 h-14 z" />
+
+    <path
+        android:fillColor="#FFFFB020"
+        android:pathData="M60,36 L45,60 h9 l-3,17 16,-23 h-9.5 z" />
+</vector>

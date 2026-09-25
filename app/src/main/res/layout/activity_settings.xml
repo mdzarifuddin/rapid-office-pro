@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        app:navigationIcon="@drawable/ic_arrow_back"
+        app:title="@string/action_settings" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <LinearLayout
+            android:id="@+id/settingsContent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingBottom="32dp">
+
+            <TextView
+                style="@style/SettingsHeading"
+                android:text="@string/settings_reading" />
+
+            <LinearLayout
+                android:id="@+id/colourModeRow"
+                style="@style/SettingsRow">
+
+                <LinearLayout style="@style/SettingsRowText">
+
+                    <TextView
+                        style="@style/TextAppearance.Material3.BodyLarge"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_colour_mode" />
+
+                    <TextView
+                        android:id="@+id/colourModeValue"
+                        style="@style/SettingsRowValue" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/orientationRow"
+                style="@style/SettingsRow">
+
+                <LinearLayout style="@style/SettingsRowText">
+
+                    <TextView
+                        style="@style/TextAppearance.Material3.BodyLarge"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_screen" />
+
+                    <TextView
+                        android:id="@+id/orientationValue"
+                        style="@style/SettingsRowValue" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/qualityRow"
+                style="@style/SettingsRow">
+
+                <LinearLayout style="@style/SettingsRowText">
+
+                    <TextView
+                        style="@style/TextAppearance.Material3.BodyLarge"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_quality" />
+
+                    <TextView
+                        android:id="@+id/qualityValue"
+                        style="@style/SettingsRowValue" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/dualLandscapeRow"
+                style="@style/SettingsRow">
+
+                <LinearLayout style="@style/SettingsRowText">
+
+                    <TextView
+                        style="@style/TextAppearance.Material3.BodyLarge"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_dual_landscape" />
+
+                    <TextView
+                        style="@style/SettingsRowValue"
+                        android:text="@string/settings_dual_landscape_detail" />
+                </LinearLayout>
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/dualLandscapeSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/keepScreenOnRow"
+                style="@style/SettingsRow">
+
+                <LinearLayout style="@style/SettingsRowText">
+
+                    <TextView
+                        style="@style/TextAppearance.Material3.BodyLarge"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_keep_screen_on" />
+
+                    <TextView
+                        style="@style/SettingsRowValue"
+                        android:text="@string/settings_keep_screen_on_detail" />
+                </LinearLayout>
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/keepScreenOnSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                style="@style/SettingsHeading"
+                android:text="@string/settings_storage" />
+
+            <LinearLayout
+                android:id="@+id/clearCacheRow"
+                style="@style/SettingsRow">
+
+                <LinearLayout style="@style/SettingsRowText">
+
+                    <TextView
+                        style="@style/TextAppearance.Material3.BodyLarge"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_clear_cache" />
+
+                    <TextView
+                        android:id="@+id/cacheSizeValue"
+                        style="@style/SettingsRowValue" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/clearHistoryRow"
+                style="@style/SettingsRow">
+
+                <LinearLayout style="@style/SettingsRowText">
+
+                    <TextView
+                        style="@style/TextAppearance.Material3.BodyLarge"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_clear_history" />
+
+                    <TextView
+                        style="@style/SettingsRowValue"
+                        android:text="@string/settings_clear_history_detail" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/updateRow"
+                style="@style/SettingsRow">
+
+                <LinearLayout style="@style/SettingsRowText">
+
+                    <TextView
+                        style="@style/TextAppearance.Material3.BodyLarge"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_update" />
+
+                    <TextView
+                        android:id="@+id/updateValue"
+                        style="@style/SettingsRowValue" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/aboutText"
+                style="@style/SettingsRowValue"
+                android:padding="20dp" />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

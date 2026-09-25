@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The app's one piece of colour. Everything below it is deliberately plain — a document list and a
+  page of text both want a quiet background — so the header carries the brand on its own.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="0"
+        android:startColor="@color/header_gradient_start"
+        android:centerColor="@color/header_gradient_middle"
+        android:endColor="@color/header_gradient_end"
+        android:type="linear" />
+</shape>

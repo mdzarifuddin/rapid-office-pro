@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.RapidPDF" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">#FF6FB3EE</item>
+        <item name="colorOnPrimary">#FF07304F</item>
+        <item name="colorPrimaryContainer">#FF1B4368</item>
+        <item name="colorOnPrimaryContainer">#FFD3E7FA</item>
+
+        <item name="android:colorBackground">@color/surface_dim_dark</item>
+        <item name="colorSurface">@color/surface_dark</item>
+        <item name="colorSurfaceContainer">@color/surface_dark</item>
+        <item name="colorSurfaceVariant">@color/surface_variant_dark</item>
+        <item name="colorOnSurface">@color/on_surface_dark</item>
+        <item name="colorOnSurfaceVariant">@color/on_surface_variant_dark</item>
+        <item name="colorOutline">@color/outline_dark</item>
+        <item name="colorOutlineVariant">@color/outline_dark</item>
+
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

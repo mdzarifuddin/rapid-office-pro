@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.RapidPDF" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/brand_blue</item>
+        <item name="colorOnPrimary">#FFFFFFFF</item>
+        <item name="colorPrimaryContainer">@color/brand_blue_container</item>
+        <item name="colorOnPrimaryContainer">@color/brand_blue_dark</item>
+        <item name="colorSecondary">@color/brand_blue_dark</item>
+
+        <item name="android:colorBackground">@color/surface_dim_light</item>
+        <item name="colorSurface">@color/surface_light</item>
+        <item name="colorSurfaceContainer">@color/surface_light</item>
+        <item name="colorSurfaceVariant">@color/surface_variant_light</item>
+        <item name="colorOnSurface">@color/on_surface_light</item>
+        <item name="colorOnSurfaceVariant">@color/on_surface_variant_light</item>
+        <item name="colorOutline">@color/outline_light</item>
+        <item name="colorOutlineVariant">@color/outline_light</item>
+
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- The header is dark and coloured, so the clock and icons over it have to be light. -->
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <!-- The reader keeps its dark backdrop in both system themes: pages read better on grey. -->
+    <style name="Theme.RapidPDF.Reader" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/brand_blue</item>
+        <item name="android:windowBackground">@color/reader_backdrop</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <!--
+      A labelled control on one of the reader's floating bars.
+
+      Icon-only bars read fine once you already know them and are guesswork until then, so every
+      button on the reader's bars carries its name underneath. The whole column is the touch
+      target, not just the icon, which is why the click listener goes on the container.
+    -->
+    <style name="ReaderBarButton">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minWidth">50dp</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:gravity">center_horizontal</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:background">?attr/selectableItemBackgroundBorderless</item>
+        <item name="android:paddingTop">5dp</item>
+        <item name="android:paddingHorizontal">2dp</item>
+        <item name="android:paddingBottom">3dp</item>
+    </style>
+
+    <!-- A brush-bar tool: the row shares its width out evenly, so it fits any phone unscrolled. -->
+    <style name="DrawToolButton" parent="ReaderBarButton">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:paddingTop">6dp</item>
+        <item name="android:paddingBottom">4dp</item>
+    </style>
+
+    <style name="DrawBarDivider">
+        <item name="android:layout_width">1dp</item>
+        <item name="android:layout_height">28dp</item>
+        <item name="android:layout_marginHorizontal">3dp</item>
+        <item name="android:background">@drawable/bg_bar_divider</item>
+    </style>
+
+    <style name="ReaderBarIcon">
+        <item name="android:layout_width">23dp</item>
+        <item name="android:layout_height">23dp</item>
+        <item name="android:duplicateParentState">true</item>
+    </style>
+
+    <style name="ReaderBarLabel">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">3dp</item>
+        <item name="android:textSize">9sp</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:textColor">#D9FFFFFF</item>
+        <item name="android:duplicateParentState">true</item>
+    </style>
+
+    <!-- The open-documents panel: a dialog that behaves like a sheet hanging off the header. -->
+    <style name="Theme.RapidPDF.TopSheet" parent="Theme.Material3.DayNight.Dialog">
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:backgroundDimAmount">0.45</item>
+        <item name="android:windowAnimationStyle">@style/Animation.RapidPDF.TopSheet</item>
+    </style>
+
+    <style name="Animation.RapidPDF.TopSheet" parent="@android:style/Animation">
+        <item name="android:windowEnterAnimation">@anim/top_sheet_enter</item>
+        <item name="android:windowExitAnimation">@anim/top_sheet_exit</item>
+    </style>
+
+    <style name="TextAppearance.RapidPDF.FileBadge" parent="TextAppearance.Material3.LabelSmall">
+        <item name="android:textColor">#FFFFFFFF</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textSize">10sp</item>
+        <item name="android:letterSpacing">0.04</item>
+    </style>
+
+    <style name="SettingsHeading" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:paddingHorizontal">20dp</item>
+        <item name="android:paddingTop">20dp</item>
+        <item name="android:paddingBottom">6dp</item>
+        <item name="android:textColor">?attr/colorPrimary</item>
+    </style>
+
+    <style name="SettingsRow">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:background">?attr/selectableItemBackground</item>
+        <item name="android:paddingHorizontal">20dp</item>
+        <item name="android:paddingVertical">14dp</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+    </style>
+
+    <style name="SettingsRowText">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:layout_marginEnd">16dp</item>
+    </style>
+
+    <style name="SettingsRowValue" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">?attr/colorOnSurfaceVariant</item>
+    </style>
+</resources>

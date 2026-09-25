@@ -1,0 +1,542 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Office reading screen.
+
+  Deliberately the same furniture as the PDF one — same bar, same labels, same handle — so that
+  opening a spreadsheet does not feel like opening a different app. What changes is the surface in
+  the middle and what the page pill counts.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/reader_backdrop">
+
+    <top.teamaos.pdfreader.office.OfficeView
+        android:id="@+id/officeView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <top.teamaos.pdfreader.view.FastScrollBar
+        android:id="@+id/fastScroll"
+        android:layout_width="40dp"
+        android:layout_height="match_parent"
+        android:layout_gravity="end"
+        android:layout_marginTop="64dp"
+        android:layout_marginBottom="96dp" />
+
+    <TextView
+        android:id="@+id/scrollBubble"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginEnd="66dp"
+        android:background="@drawable/bg_page_pill"
+        android:gravity="center"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="10dp"
+        android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+        android:textColor="#FFFFFFFF"
+        android:visibility="gone" />
+
+    <com.google.android.material.appbar.MaterialToolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@drawable/bg_reader_header"
+        app:navigationIcon="@drawable/ic_arrow_back"
+        app:titleTextAppearance="@style/TextAppearance.Material3.TitleMedium" />
+
+    <LinearLayout
+        android:id="@+id/searchBar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@drawable/bg_reader_header"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="4dp"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/searchCloseButton"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/cancel"
+            android:src="@drawable/ic_arrow_back"
+            app:tint="#FFFFFFFF" />
+
+        <EditText
+            android:id="@+id/searchInput"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@null"
+            android:hint="@string/search_in_document"
+            android:imeOptions="actionSearch"
+            android:inputType="text"
+            android:maxLines="1"
+            android:textColor="#FFFFFFFF"
+            android:textColorHint="#80FFFFFF" />
+
+        <TextView
+            android:id="@+id/searchCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="6dp"
+            android:textAppearance="@style/TextAppearance.Material3.LabelMedium"
+            android:textColor="#CCFFFFFF" />
+
+        <ImageButton
+            android:id="@+id/searchPrevButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/search_previous"
+            android:src="@drawable/ic_arrow_up"
+            app:tint="#FFFFFFFF" />
+
+        <ImageButton
+            android:id="@+id/searchNextButton"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/search_next"
+            android:src="@drawable/ic_arrow_down"
+            app:tint="#FFFFFFFF" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/pageChip"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="@drawable/bg_page_pill"
+        android:paddingHorizontal="20dp"
+        android:paddingVertical="12dp"
+        android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+        android:textColor="#FFFFFFFF"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/zoomSliderBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginHorizontal="12dp"
+        android:layout_marginBottom="112dp"
+        android:background="@drawable/bg_floating_toolbar"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingHorizontal="10dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="3dp"
+        android:visibility="gone">
+
+        <!-- The slider gets a whole row to itself: squeezed in beside the buttons it was too short
+             to set a zoom with any precision. -->
+        <com.google.android.material.slider.Slider
+            android:id="@+id/zoomSlider"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:stepSize="0"
+            android:valueFrom="-2.0"
+            android:valueTo="3.0"
+            app:labelBehavior="gone" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:id="@+id/zoomOutButton"
+                style="@style/ReaderBarButton"
+                android:contentDescription="@string/zoom_out">
+
+                <ImageView
+                    style="@style/ReaderBarIcon"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_zoom_out"
+                    app:tint="#FFFFFFFF" />
+
+                <TextView
+                    style="@style/ReaderBarLabel"
+                    android:text="@string/label_zoom_out" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/zoomPercent"
+                android:layout_width="56dp"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
+                android:textColor="#FFFFFFFF" />
+
+            <LinearLayout
+                android:id="@+id/zoomInButton"
+                style="@style/ReaderBarButton"
+                android:contentDescription="@string/zoom_in">
+
+                <ImageView
+                    style="@style/ReaderBarIcon"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_zoom_in"
+                    app:tint="#FFFFFFFF" />
+
+                <TextView
+                    style="@style/ReaderBarLabel"
+                    android:text="@string/label_zoom_in" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/zoomResetButton"
+                style="@style/ReaderBarButton"
+                android:contentDescription="@string/zoom_fit">
+
+                <ImageView
+                    style="@style/ReaderBarIcon"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_fit_page"
+                    app:tint="#FF7FC0FF" />
+
+                <TextView
+                    style="@style/ReaderBarLabel"
+                    android:text="@string/zoom_fit"
+                    android:textColor="#FF7FC0FF" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/bottomBarScroller"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginHorizontal="8dp"
+        android:layout_marginBottom="20dp"
+        android:background="@drawable/bg_floating_toolbar"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingHorizontal="6dp"
+        android:paddingTop="7dp"
+        android:paddingBottom="3dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <!-- "7 / 56" alone did not say what it counted; the small word under it does. -->
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/pageIndicator"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_page_pill"
+                    android:maxLines="1"
+                    android:paddingHorizontal="11dp"
+                    android:paddingVertical="4dp"
+                    android:textAppearance="@style/TextAppearance.Material3.LabelMedium"
+                    android:textColor="#FFFFFFFF" />
+
+                <TextView
+                    style="@style/ReaderBarLabel"
+                    android:text="@string/label_page" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/statusText"
+                android:visibility="gone"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="6dp"
+                android:alpha="0.75"
+                android:maxLines="1"
+                android:textAppearance="@style/TextAppearance.Material3.LabelSmall"
+                android:textColor="#FFFFFFFF" />
+        </LinearLayout>
+
+        <HorizontalScrollView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:overScrollMode="never"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/zoomButton"
+                    style="@style/ReaderBarButton"
+                    android:contentDescription="@string/action_zoom">
+
+                    <ImageView
+                        style="@style/ReaderBarIcon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_zoom_in"
+                        app:tint="#FFFFFFFF" />
+
+                    <TextView
+                        style="@style/ReaderBarLabel"
+                        android:text="@string/label_zoom" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/contentsButton"
+                    style="@style/ReaderBarButton"
+                    android:contentDescription="@string/action_outline">
+
+                    <ImageView
+                        style="@style/ReaderBarIcon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_list"
+                        app:tint="#FFFFFFFF" />
+
+                    <TextView
+                        style="@style/ReaderBarLabel"
+                        android:text="@string/label_contents" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/orientationButton"
+                    style="@style/ReaderBarButton"
+                    android:contentDescription="@string/action_orientation">
+
+                    <ImageView
+                        android:id="@+id/orientationIcon"
+                        style="@style/ReaderBarIcon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_screen_auto"
+                        app:tint="#FFFFFFFF" />
+
+                    <TextView
+                        style="@style/ReaderBarLabel"
+                        android:text="@string/label_screen" />
+                </LinearLayout>
+
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <!-- Second row: the reading tools, each with its name under it. A row of their own keeps
+             the page number and view controls from being pushed off the side, and the row scrolls
+             sideways on a narrow phone rather than squeezing the labels. -->
+        <HorizontalScrollView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:overScrollMode="never"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/toolRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/toolColourButton"
+                    style="@style/ReaderBarButton"
+                    android:contentDescription="@string/action_colour_mode">
+
+                    <ImageView
+                        style="@style/ReaderBarIcon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_dark_mode"
+                        app:tint="#FFFFFFFF" />
+
+                    <TextView
+                        style="@style/ReaderBarLabel"
+                        android:text="@string/label_colour" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/toolShareButton"
+                    style="@style/ReaderBarButton"
+                    android:contentDescription="@string/action_share">
+
+                    <ImageView
+                        style="@style/ReaderBarIcon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_share"
+                        app:tint="#FFFFFFFF" />
+
+                    <TextView
+                        style="@style/ReaderBarLabel"
+                        android:text="@string/label_share" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/toolOpenWithButton"
+                    style="@style/ReaderBarButton"
+                    android:contentDescription="@string/action_open_with">
+
+                    <ImageView
+                        style="@style/ReaderBarIcon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_folder"
+                        app:tint="#FFFFFFFF" />
+
+                    <TextView
+                        style="@style/ReaderBarLabel"
+                        android:text="@string/label_open_with" />
+                </LinearLayout>
+
+            </LinearLayout>
+        </HorizontalScrollView>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/textActionBar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginHorizontal="8dp"
+        android:layout_marginBottom="20dp"
+        android:background="@drawable/bg_floating_toolbar"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="6dp"
+        android:paddingTop="5dp"
+        android:paddingBottom="3dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/textCopyButton"
+            style="@style/ReaderBarButton"
+            android:contentDescription="@string/text_copy">
+
+            <ImageView
+                style="@style/ReaderBarIcon"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_copy"
+                app:tint="#FFFFFFFF" />
+
+            <TextView
+                style="@style/ReaderBarLabel"
+                android:text="@string/text_copy" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/textFindButton"
+            style="@style/ReaderBarButton"
+            android:contentDescription="@string/text_find">
+
+            <ImageView
+                style="@style/ReaderBarIcon"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_search"
+                app:tint="#FFFFFFFF" />
+
+            <TextView
+                style="@style/ReaderBarLabel"
+                android:text="@string/text_find" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/textTranslateButton"
+            style="@style/ReaderBarButton"
+            android:contentDescription="@string/text_translate">
+
+            <ImageView
+                style="@style/ReaderBarIcon"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_translate"
+                app:tint="#FFFFFFFF" />
+
+            <TextView
+                style="@style/ReaderBarLabel"
+                android:text="@string/text_translate" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/textShareButton"
+            style="@style/ReaderBarButton"
+            android:contentDescription="@string/action_share">
+
+            <ImageView
+                style="@style/ReaderBarIcon"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_share"
+                app:tint="#FFFFFFFF" />
+
+            <TextView
+                style="@style/ReaderBarLabel"
+                android:text="@string/text_share" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/limitationNote"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:layout_marginTop="?attr/actionBarSize"
+        android:background="#E6403A28"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="8dp"
+        android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+        android:textColor="#FFF3D9A4"
+        android:visibility="gone" />
+
+    <FrameLayout
+        android:id="@+id/loadingOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/reader_backdrop"
+        android:clickable="true"
+        android:focusable="true">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="vertical">
+
+            <ProgressBar
+                android:layout_width="48dp"
+                android:layout_height="48dp" />
+
+            <TextView
+                android:id="@+id/loadingText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/office_opening"
+                android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+                android:textColor="#FFFFFFFF" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/errorView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/reader_backdrop"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="32dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/errorText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:textAppearance="@style/TextAppearance.Material3.BodyLarge"
+            android:textColor="#FFFFFFFF" />
+    </LinearLayout>
+</FrameLayout>
