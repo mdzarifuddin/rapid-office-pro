@@ -26,8 +26,8 @@ android {
         applicationId = "top.teamaos.pdfreader"
         minSdk = 24
         targetSdk = 36
-        versionCode = 10
-        versionName = "2.5"
+        versionCode = 11
+        versionName = "2.6"
 
         // Where "Install latest version" looks for new releases: owner/repository on GitHub.
         val updateRepo = (project.findProperty("updateRepo") as String?) ?: "mdzarifuddin/rapid-office-pro"

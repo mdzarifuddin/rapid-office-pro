@@ -609,7 +609,9 @@ class ReaderActivity : AppCompatActivity() {
             )
             settingSliderProgrammatically = false
         }
-        if (reveal) revealZoomSlider()
+        // A pinch only zooms. The slider bar opens from the Zoom button alone; while it is already
+        // open, zooming by hand just keeps it from timing out underneath the fingers.
+        if (reveal && binding.zoomSliderBar.visibility == View.VISIBLE) revealZoomSlider()
     }
 
     private fun toggleZoomSlider() {
@@ -617,7 +619,8 @@ class ReaderActivity : AppCompatActivity() {
             binding.zoomSliderBar.removeCallbacks(hideZoomSliderRunnable)
             binding.zoomSliderBar.visibility = View.GONE
         } else {
-            updateZoomLabel(reveal = true)
+            updateZoomLabel()
+            revealZoomSlider()
         }
     }
 

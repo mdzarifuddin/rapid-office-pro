@@ -1,7 +1,7 @@
-Rapid Office Pro — build v2.5
+Rapid Office Pro — build v2.6
 =============================
 
-RapidOfficePro-v2.5.apk  — signed release build. Install this on your phone.
+RapidOfficePro-v2.6.apk  — signed release build. Install this on your phone.
 
 This is the same app as Rapid PDF, renamed, because it is no longer only a PDF reader:
 Word, Excel, PowerPoint, CSV and text files now open in it too. It installs straight over
@@ -119,6 +119,11 @@ up front.
 Office files are measured once when opened and never again — zooming is a matrix, not a
 re-layout — so a Word file stays sharp at any zoom without re-rendering anything.
 
+
+New in v2.6
+-----------
+- Pinching or double-tapping only zooms. The zoom bar (slider, Out, In, Fit) opens only from the
+  Zoom button. If it is already open, it stays open while you pinch.
 
 New in v2.5
 -----------
