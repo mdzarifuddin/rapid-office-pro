@@ -30,7 +30,7 @@ android {
         versionName = "2.4"
 
         // Where "Install latest version" looks for new releases: owner/repository on GitHub.
-        val updateRepo = (project.findProperty("updateRepo") as String?) ?: "OWNER/rapid-office-pro"
+        val updateRepo = (project.findProperty("updateRepo") as String?) ?: "mdzarifuddin/rapid-office-pro"
         buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
 
         ndk {
