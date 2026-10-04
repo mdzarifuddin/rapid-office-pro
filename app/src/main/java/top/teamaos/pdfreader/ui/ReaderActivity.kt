@@ -41,6 +41,7 @@ import kotlin.math.roundToInt
 import top.teamaos.pdfreader.R
 import top.teamaos.pdfreader.core.DocumentController
 import top.teamaos.pdfreader.core.DocumentTabs
+import kotlin.coroutines.cancellation.CancellationException
 import top.teamaos.pdfreader.core.PdfNative
 import top.teamaos.pdfreader.core.PdfPasswordException
 import top.teamaos.pdfreader.core.PdfLinkTarget
@@ -89,7 +90,9 @@ class ReaderActivity : AppCompatActivity() {
     ) { uri ->
         uri?.let {
             takePersistablePermission(it)
-            openDocument(located(it), password = null)
+            lifecycleScope.launch {
+                openDocument(withContext(Dispatchers.IO) { located(it) }, password = null)
+            }
         }
     }
 
@@ -121,13 +124,33 @@ class ReaderActivity : AppCompatActivity() {
         applyOrientation()
         applyKeepScreenOn()
 
+        openFromIntent(intent)
+    }
+
+    /**
+     * There is only ever one reader (singleTask): a document opened from another app while it is
+     * already showing one arrives here and becomes a new tab. Before, every file opened from
+     * WhatsApp or a file manager stacked another whole reader on top of the last, each holding its
+     * own page bitmaps, until the phone ran out of memory.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        openFromIntent(intent)
+    }
+
+    private fun openFromIntent(intent: Intent) {
         val uri = intent.data ?: intent.getParcelableExtra<Uri>(EXTRA_URI)
         if (uri == null) {
-            showError(getString(R.string.error_open_failed))
+            if (controller == null) showError(getString(R.string.error_open_failed))
             return
         }
         takePersistablePermission(uri)
-        openDocument(located(uri), password = null)
+        lifecycleScope.launch {
+            // Resolving a path can touch a slow memory card, so not on the main thread.
+            val target = withContext(Dispatchers.IO) { located(uri) }
+            openDocument(target, password = null)
+        }
     }
 
     /**
@@ -368,9 +391,11 @@ class ReaderActivity : AppCompatActivity() {
         lifecycleScope.launch {
             controller?.takeIf { it !== newController }?.let {
                 it.lastPosition = binding.pdfView.readingPosition()
+                it.captureSnapshot(binding.pdfView.currentPage)
                 it.onInvalidate = null
                 it.onGeometryChanged = null
             }
+            if (controller !== newController) closeSearch()
             controller = newController
             newController.renderer.quality = RenderQuality.entries
                 .getOrElse(Settings.get(this@ReaderActivity).renderQuality) { RenderQuality.BALANCED }
@@ -738,6 +763,8 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun extractPagesNow(active: DocumentController, pages: List<Int>) {
         active.extractPages(pages) { file ->
+            // Finished on the render thread; the screen may have closed in the meantime.
+            if (isDestroyed) return@extractPages
             updateSelectionCount(binding.pdfView.selectedPages)
             if (file == null) {
                 Toast.makeText(this, R.string.extract_failed, Toast.LENGTH_LONG).show()
@@ -1001,9 +1028,13 @@ class ReaderActivity : AppCompatActivity() {
             is EditStep.AddStroke -> removeStrokes(listOf(step.stroke))
             is EditStep.RemoveStrokes -> restoreStrokes(step.strokes)
             is EditStep.Crop -> controller?.restoreCropBoxes(step.previousBoxes) { changed ->
+                // Finished on the render thread; the screen may have closed in the meantime.
+                if (isDestroyed) return@restoreCropBoxes
                 if (changed) binding.pdfView.onGeometryUpdated()
             }
             is EditStep.Rotate -> controller?.rotatePages(step.pages, -step.quarterTurns) { changed ->
+                // Finished on the render thread; the screen may have closed in the meantime.
+                if (isDestroyed) return@rotatePages
                 if (changed) binding.pdfView.onGeometryUpdated()
             }
         }
@@ -1023,9 +1054,13 @@ class ReaderActivity : AppCompatActivity() {
             // Cropping again from the box that has just been restored lands in the same place,
             // because the frame was recorded as fractions of the page, not as absolute points.
             is EditStep.Crop -> controller?.cropPages(step.pages, step.fractions) { changed, _ ->
+                // Finished on the render thread; the screen may have closed in the meantime.
+                if (isDestroyed) return@cropPages
                 if (changed) binding.pdfView.onGeometryUpdated()
             }
             is EditStep.Rotate -> controller?.rotatePages(step.pages, step.quarterTurns) { changed ->
+                // Finished on the render thread; the screen may have closed in the meantime.
+                if (isDestroyed) return@rotatePages
                 if (changed) binding.pdfView.onGeometryUpdated()
             }
         }
@@ -1067,6 +1102,8 @@ class ReaderActivity : AppCompatActivity() {
             .setPositiveButton(R.string.label_burn) { _, _ ->
                 val snapshot = marks.mapValues { it.value.toList() }
                 active.burnMarks(snapshot) { ok ->
+                    // Finished on the render thread; the screen may have closed in the meantime.
+                    if (isDestroyed) return@burnMarks
                     if (!ok) {
                         Toast.makeText(this, R.string.marks_burn_failed, Toast.LENGTH_LONG).show()
                         return@burnMarks
@@ -1367,6 +1404,8 @@ class ReaderActivity : AppCompatActivity() {
 
     private fun splitPagesNow(active: DocumentController, pages: List<Int>, rightFirst: Boolean) {
         active.splitPages(pages, rightFirst) { file ->
+            // Finished on the render thread; the screen may have closed in the meantime.
+            if (isDestroyed) return@splitPages
             binding.loadingOverlay.visibility = View.GONE
             if (file == null) {
                 Toast.makeText(this, R.string.split_failed, Toast.LENGTH_LONG).show()
@@ -1443,6 +1482,8 @@ class ReaderActivity : AppCompatActivity() {
         val fractions = binding.cropOverlay.fractions()
         finishCrop()
         active.cropPages(pages, fractions) { changed, previous ->
+            // Finished on the render thread; the screen may have closed in the meantime.
+            if (isDestroyed) return@cropPages
             Toast.makeText(
                 this,
                 if (changed) R.string.crop_done else R.string.crop_failed,
@@ -1482,6 +1523,8 @@ class ReaderActivity : AppCompatActivity() {
         val pages = binding.pdfView.selectedPages.toList()
         if (pages.isEmpty()) return
         active.rotatePages(pages, quarterTurns) { changed ->
+            // Finished on the render thread; the screen may have closed in the meantime.
+            if (isDestroyed) return@rotatePages
             if (changed) {
                 pushUndo(EditStep.Rotate(pages, quarterTurns))
                 binding.pdfView.onGeometryUpdated()
@@ -1509,13 +1552,24 @@ class ReaderActivity : AppCompatActivity() {
             invalidateOptionsMenu()
             onPageChanged(binding.pdfView.currentPage)
             if (ok) {
-                then?.invoke()
+                if (then != null) then() else reopenAfterSave(active)
             } else {
                 // A New PDF or Split waiting on this save will not run; do not leave it looking busy.
                 binding.loadingOverlay.visibility = View.GONE
                 updateSelectionCount(binding.pdfView.selectedPages)
             }
         }
+    }
+
+    /**
+     * The file under the open document has just been rewritten, so the open handle points at a file
+     * that no longer matches what pdfium read from it. Reopen it, keeping the reader's place.
+     */
+    private fun reopenAfterSave(active: DocumentController) {
+        if (controller !== active) return
+        active.lastPosition = binding.pdfView.readingPosition()
+        if (!active.park()) return
+        switchToTab(active)
     }
 
     /** Offer to save before leaving, so an accidental back press cannot lose a rotation. */
@@ -1672,9 +1726,14 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     private fun showTabs() {
+        // The visible tab shows the page being read right now, not the one it was opened on.
+        controller?.let {
+            it.lastPosition = binding.pdfView.readingPosition()
+            it.captureSnapshot(binding.pdfView.currentPage)
+        }
         TabsSheet.show(
             context = this,
-            onSwitch = { showController(it).also { _ -> DocumentTabs.makeActive(it) } },
+            onSwitch = { switchToTab(it) },
             onClosed = {
                 updateTabCount()
                 // Closing the visible tab hands the reader to whatever was open before it; closing
@@ -1684,11 +1743,47 @@ class ReaderActivity : AppCompatActivity() {
                     controller = null
                     finish()
                 } else if (next !== controller) {
-                    showController(next)
+                    switchToTab(next)
                 }
             },
             onOpenAnother = { pickDocument.launch(SUPPORTED_MIME_TYPES) },
         )
+    }
+
+    /**
+     * Show another tab. Most tabs are parked — only a name and a position — so the file may have to
+     * be reopened first; if it has since been deleted or moved, the tab is dropped and the reader
+     * moves on to whatever is left.
+     */
+    private fun switchToTab(target: DocumentController) {
+        lifecycleScope.launch {
+            if (target.isParked) binding.loadingOverlay.visibility = View.VISIBLE
+            controller?.takeIf { it !== target }?.let {
+                it.lastPosition = binding.pdfView.readingPosition()
+                it.captureSnapshot(binding.pdfView.currentPage)
+            }
+            try {
+                DocumentTabs.activate(target)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("RapidPDF", "Could not reopen ${target.uri}", e)
+                binding.loadingOverlay.visibility = View.GONE
+                Toast.makeText(this@ReaderActivity, R.string.error_open_failed, Toast.LENGTH_LONG).show()
+                updateTabCount()
+                val next = DocumentTabs.active
+                when {
+                    next == null -> {
+                        controller = null
+                        finish()
+                    }
+                    next !== controller -> switchToTab(next)
+                }
+                return@launch
+            }
+            showController(target)
+            updateTabCount()
+        }
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
@@ -1829,7 +1924,10 @@ class ReaderActivity : AppCompatActivity() {
                     flatten(bookmark.children, depth + 1)
                 }
             }
-            flatten(active.session.tableOfContents(), 0)
+            // Off the main thread: pdfium is shared with the render thread, which may be busy with
+            // a heavy scanned page, and a long outline takes a while to read on its own.
+            flatten(withContext(Dispatchers.IO) { active.session.tableOfContents() }, 0)
+            if (isDestroyed) return@launch
 
             if (entries.isEmpty()) {
                 Toast.makeText(this@ReaderActivity, "This document has no contents", Toast.LENGTH_SHORT).show()
@@ -1852,7 +1950,8 @@ class ReaderActivity : AppCompatActivity() {
     private fun showDocumentInfo() {
         val active = controller ?: return
         lifecycleScope.launch {
-            val meta = active.session.metadata()
+            val meta = withContext(Dispatchers.IO) { active.session.metadata() }
+            if (isDestroyed) return@launch
             val text = buildString {
                 appendLine(active.displayName)
                 appendLine()
@@ -1883,11 +1982,15 @@ class ReaderActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         Updater.resumePendingInstall(this)
+        // Being sent to the background stops page measuring and drops the bitmaps; pick both up.
+        controller?.onForegrounded()
+        binding.pdfView.invalidate()
     }
 
     override fun onPause() {
         super.onPause()
         saveReadingPosition()
+        controller?.captureSnapshot(binding.pdfView.currentPage)
     }
 
     private fun saveReadingPosition() {
@@ -1908,8 +2011,10 @@ class ReaderActivity : AppCompatActivity() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
-            controller?.onBackgrounded()
             DocumentTabs.trimBackgroundTabs()
+        } else if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            // Still on screen but the phone is short of memory: the other tabs give back theirs.
+            DocumentTabs.parkBackgroundTabs()
         }
     }
 
@@ -1923,6 +2028,8 @@ class ReaderActivity : AppCompatActivity() {
         // Documents belong to DocumentTabs, not to this activity: leaving the reader must not close
         // the open tabs. They are released when the user closes them, or when a tab is evicted.
         if (isFinishing && DocumentTabs.count == 0) DocumentTabs.closeAll()
+        // They stay in the tab list, but none of them needs an open file until the reader is back.
+        if (isFinishing) DocumentTabs.parkAll()
         controller = null
         tabCountLabel = null
         // Nothing here should outlive the screen: the selector holds the open document.

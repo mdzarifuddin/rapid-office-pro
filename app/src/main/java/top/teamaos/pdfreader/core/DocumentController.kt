@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -104,6 +105,24 @@ class DocumentController(
         extraInvalidateListeners.toList().forEach { it() }
     }
 
+    /**
+     * A small picture of the page this tab was left on, for the tab list. Kept apart from the
+     * render caches, so it survives the tab being parked; at this size, 25 of them are about 1 MB.
+     */
+    var snapshot: Bitmap? = null
+        private set
+
+    /** Take [snapshot] from whatever is already drawn for [page]. Never renders anything new. */
+    fun captureSnapshot(page: Int) {
+        if (!isLive) return
+        val source = cache.page(page)?.bitmap ?: cache.thumb(page) ?: return
+        if (source.width <= 0 || source.height <= 0) return
+        val height = (SNAPSHOT_WIDTH_PX * source.height / source.width).coerceIn(1, SNAPSHOT_WIDTH_PX * 4)
+        runCatching { Bitmap.createScaledBitmap(source, SNAPSHOT_WIDTH_PX, height, true) }
+            .getOrNull()
+            ?.let { snapshot = it }
+    }
+
     /** Where the reader was when this tab was last visible, for restoring on switch back. */
     var lastPosition: FloatArray? = null
 
@@ -122,22 +141,8 @@ class DocumentController(
      */
     suspend fun open(password: String? = null) {
         val startedAt = SystemClock.elapsedRealtime()
-        val opened = withContext(Dispatchers.IO) { PdfSession.open(context, uri, password) }
-        session = opened
-        val mappedAt = SystemClock.elapsedRealtime()
-
-        val firstPageSize = withContext(Dispatchers.IO) { opened.pageSizePoints(0) }
-        geometry = PageGeometry(opened.pageCount).apply {
-            firstPageSize?.let { seed(it[0], it[1]) }
-            // Page 1 is genuinely measured; the rest are its size until proven otherwise.
-            firstPageSize?.let { setMeasured(0, it[0], it[1]); rebuild() }
-        }
-
-        cache = RenderCache(context)
-        val renderThread = RenderScheduler("pdf-render-${uri.hashCode()}")
-        scheduler = renderThread
-        renderer = PageRenderer(opened, cache, renderThread) { notifyInvalidated() }
-        measurer = PageMeasurer(opened, geometry, renderThread)
+        this.password = password
+        val mappedAt = openNative(keepGeometry = false)
 
         loadHistory()
         startMeasuring()
@@ -150,25 +155,81 @@ class DocumentController(
         )
     }
 
+    /**
+     * Map the file and build the render pipeline around it. Shared by [open] and [wake].
+     *
+     * [keepGeometry] reuses the page sizes already measured for this tab, provided the document
+     * still has the same pages; anything else starts again from page 1's size.
+     */
+    private suspend fun openNative(keepGeometry: Boolean): Long {
+        val opened = withContext(Dispatchers.IO) { PdfSession.open(context, uri, password) }
+        session = opened
+        val mappedAt = SystemClock.elapsedRealtime()
+
+        val firstPageSize = withContext(Dispatchers.IO) { opened.pageSizePoints(0) }
+        this.firstPageSize = firstPageSize
+        val reuse = keepGeometry && ::geometry.isInitialized &&
+            geometry.pageCount == opened.pageCount && matchesFirstPage(geometry.widthPts(0), geometry.heightPts(0))
+        if (!reuse) {
+            geometry = PageGeometry(opened.pageCount).apply {
+                firstPageSize?.let { seed(it[0], it[1]) }
+                // Page 1 is genuinely measured; the rest are its size until proven otherwise.
+                firstPageSize?.let { setMeasured(0, it[0], it[1]); rebuild() }
+            }
+            geometrySaved = false
+        }
+
+        cache = RenderCache(context)
+        val renderThread = RenderScheduler("pdf-render-${uri.hashCode()}")
+        scheduler = renderThread
+        renderer = PageRenderer(opened, cache, renderThread) { notifyInvalidated() }
+        measurer = PageMeasurer(opened, geometry, renderThread)
+        return mappedAt
+    }
+
+    /** Page 1's real size, read when the file was mapped; the check against stale cached sizes. */
+    private var firstPageSize: FloatArray? = null
+
+    /** Kept so a parked tab can be reopened without asking for the password again. */
+    private var password: String? = null
+
+    private fun matchesFirstPage(width: Float, height: Float): Boolean {
+        val real = firstPageSize ?: return true
+        return kotlin.math.abs(real[0] - width) < SIZE_TOLERANCE_PTS &&
+            kotlin.math.abs(real[1] - height) < SIZE_TOLERANCE_PTS
+    }
+
     private suspend fun loadHistory() {
         val database = ReaderDatabase.get(context)
         val metadata = withContext(Dispatchers.IO) { readFileMetadata() }
-        displayName = metadata.first
+        displayName = metadata.name
         documentId = database.upsertDocument(
             uri = uri.toString(),
-            displayName = metadata.first,
-            folder = metadata.second,
-            sizeBytes = metadata.third,
-            modifiedAt = 0L,
+            displayName = metadata.name,
+            folder = metadata.folder,
+            sizeBytes = metadata.sizeBytes,
+            modifiedAt = metadata.modifiedAt,
             pageCount = session.pageCount,
             openedAt = System.currentTimeMillis(),
         )
         record = database.findDocument(uri.toString())
 
         // A cached geometry means a long document is laid out correctly on the very first frame.
+        // It is only trusted when page 1 in it is the size page 1 really is: a file replaced under
+        // the same name, or saved after a crop, would otherwise be drawn squashed into old boxes.
         database.pageSizes(documentId, session.pageCount)?.let { blob ->
-            if (geometry.loadBlob(blob)) return
+            if (blobMatchesFirstPage(blob) && geometry.loadBlob(blob)) {
+                geometrySaved = true
+                return
+            }
+            database.clearPageSizes(documentId)
         }
+    }
+
+    private fun blobMatchesFirstPage(blob: ByteArray): Boolean {
+        if (blob.size < 2 * Float.SIZE_BYTES) return false
+        val buffer = java.nio.ByteBuffer.wrap(blob).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        return matchesFirstPage(buffer.float, buffer.float)
     }
 
     private fun startMeasuring() {
@@ -455,7 +516,12 @@ class DocumentController(
     suspend fun saveChanges(): Boolean = withContext(Dispatchers.IO) {
         if (!::session.isInitialized || !session.hasUnsavedChanges) return@withContext true
         val saved = saveByRewriting()
-        if (saved) session.markSaved()
+        if (saved) {
+            session.markSaved()
+            // The file on disk now has the cropped or turned pages; the cached sizes describe the
+            // old one. Measured again on the next open.
+            if (documentId > 0) runCatching { ReaderDatabase.get(context).clearPageSizes(documentId) }
+        }
         Log.i(TAG, "save ${if (saved) "succeeded" else "failed"} for $uri")
         saved
     }
@@ -532,6 +598,10 @@ class DocumentController(
      */
     fun onBackgrounded() {
         val renderThread = scheduler ?: return
+        // Clearing the queue drops the measurer's next chunk with it, so the measurer has to be told
+        // or it believes it is still running and never measures another page. [onForegrounded]
+        // picks the sweep up again where it left off.
+        if (::measurer.isInitialized) measurer.stop()
         renderThread.clear()
         if (::cache.isInitialized) cache.trim()
         // pdfium's per-page image caches dwarf our own on scanned documents, so drop those too.
@@ -541,23 +611,91 @@ class DocumentController(
         }
     }
 
+    /** This tab is on screen again: carry on measuring whatever pages are still unmeasured. */
+    fun onForegrounded() {
+        if (released || isParked || !::session.isInitialized || session.isClosed) return
+        startMeasuring()
+    }
+
+    /**
+     * True while this tab is only a name in the tab list: its file, render thread and every bitmap
+     * have been given back, and only its place in the document is remembered.
+     */
+    var isParked: Boolean = false
+        private set
+
+    /** Holding native memory right now: the file is mapped and a render thread exists. */
+    val isLive: Boolean
+        get() = !released && !isParked && ::session.isInitialized && !session.isClosed
+
+    /**
+     * Give back everything this tab holds except its identity and reading position.
+     *
+     * This is what lets many tabs stay in the list without the memory of many open documents. A
+     * tab with unsaved rotations or crops is never parked, since closing the file would lose them.
+     * Returns whether the tab is parked afterwards.
+     */
+    fun park(): Boolean {
+        if (released) return false
+        if (isParked) return true
+        if (!::session.isInitialized || hasUnsavedChanges) return false
+        if (::measurer.isInitialized) measurer.stop()
+        scheduler?.shutdown()
+        scheduler = null
+        if (::cache.isInitialized) cache.clear()
+        closeInBackground(session)
+        isParked = true
+        Log.i(TAG, "parked $displayName")
+        return true
+    }
+
+    /**
+     * Reopen a parked tab. Cheap — the file is mapped, not read — and the page sizes already
+     * measured are reused when the document is still the same one.
+     *
+     * @throws java.io.IOException if the file has gone or can no longer be read.
+     */
+    suspend fun wake() {
+        if (released || !isParked) return
+        openNative(keepGeometry = true)
+        isParked = false
+        record = runCatching { ReaderDatabase.get(context).findDocument(uri.toString()) }.getOrNull() ?: record
+        startMeasuring()
+        Log.i(TAG, "woke $displayName")
+    }
+
     fun release() {
         if (released) return
         released = true
-        measurer.takeIf { ::measurer.isInitialized }?.stop()
+        if (::measurer.isInitialized) measurer.stop()
         scheduler?.shutdown()
         if (::cache.isInitialized) cache.clear()
-        if (::session.isInitialized) session.close()
+        if (::session.isInitialized) closeInBackground(session)
+        isParked = false
     }
 
-    /** Display name, containing folder, and size — whatever the URI scheme is willing to tell us. */
-    private fun readFileMetadata(): Triple<String, String?, Long> {
+    /**
+     * Close a session without blocking the main thread. Closing waits for pdfium's lock, which a
+     * long save, split or scanned-page render on the render thread can hold for seconds.
+     */
+    private fun closeInBackground(closing: PdfSession) {
+        scope.launch(Dispatchers.IO) { runCatching { closing.close() } }
+    }
+
+    private class FileMetadata(val name: String, val folder: String?, val sizeBytes: Long, val modifiedAt: Long)
+
+    /**
+     * Display name, containing folder, size and last-modified time — whatever the URI scheme is
+     * willing to tell us. Size and time are what reveal that a file was replaced or rewritten.
+     */
+    private fun readFileMetadata(): FileMetadata {
         if (uri.scheme == "file" || uri.scheme == null) {
             val file = uri.path?.let(::File)
-            if (file != null) return Triple(file.name, file.parent, file.length())
+            if (file != null) return FileMetadata(file.name, file.parent, file.length(), file.lastModified())
         }
         var name: String? = null
         var size = 0L
+        var modified = 0L
         runCatching {
             context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                 if (cursor.moveToFirst()) {
@@ -565,10 +703,12 @@ class DocumentController(
                     if (nameIndex >= 0 && !cursor.isNull(nameIndex)) name = cursor.getString(nameIndex)
                     val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
                     if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) size = cursor.getLong(sizeIndex)
+                    val modifiedIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                    if (modifiedIndex >= 0 && !cursor.isNull(modifiedIndex)) modified = cursor.getLong(modifiedIndex)
                 }
             }
         }
-        return Triple(name ?: uri.lastPathSegment ?: "Document", null, size)
+        return FileMetadata(name ?: uri.lastPathSegment ?: "Document", null, size, modified)
     }
 
     private companion object {
@@ -579,5 +719,11 @@ class DocumentController(
         const val RELEASE_PAGES_KEY = "release-cached-pages"
         const val COVER_THUMBNAIL_KEY = "cover-thumbnail"
         const val MAX_EXTRACTED_FILES = 8
+
+        /** Page 1 differing from the cached sizes by more than this means the file changed. */
+        const val SIZE_TOLERANCE_PTS = 0.5f
+
+        /** Twice the width the tab list shows it at, so it stays crisp on dense screens. */
+        const val SNAPSHOT_WIDTH_PX = 120
     }
 }

@@ -2,6 +2,7 @@ package top.teamaos.pdfreader.ui
 
 import android.os.Bundle
 import android.text.format.Formatter
+import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -9,6 +10,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -18,6 +20,7 @@ import top.teamaos.pdfreader.core.RenderQuality
 import top.teamaos.pdfreader.data.ReaderDatabase
 import top.teamaos.pdfreader.data.ScreenOrientationMode
 import top.teamaos.pdfreader.data.Settings
+import top.teamaos.pdfreader.data.ThumbnailStore
 import top.teamaos.pdfreader.databinding.ActivitySettingsBinding
 import top.teamaos.pdfreader.view.ColorMode
 import java.io.File
@@ -36,7 +39,9 @@ class SettingsActivity : AppCompatActivity() {
 
         ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            binding.root.updatePadding(top = bars.top)
+            // The coloured header runs up under the status bar, as on the home screen, so its light
+            // status-bar icons sit on colour rather than on the pale page background.
+            binding.header.updatePadding(top = bars.top)
             binding.settingsContent.updatePadding(bottom = bars.bottom)
             insets
         }
@@ -129,7 +134,7 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun updateCacheSize() {
         lifecycleScope.launch {
-            val bytes = withContext(Dispatchers.IO) { directorySize(cacheDir) }
+            val bytes = withContext(Dispatchers.IO) { runCatching { directorySize(cacheDir) }.getOrDefault(0L) }
             binding.cacheSizeValue.text =
                 getString(R.string.cache_size, Formatter.formatShortFileSize(this@SettingsActivity, bytes))
         }
@@ -138,12 +143,25 @@ class SettingsActivity : AppCompatActivity() {
     private fun directorySize(directory: File): Long =
         directory.walkBottomUp().filter { it.isFile }.sumOf { it.length() }
 
+    /**
+     * Empties the cache, except an update APK: that may be mid-download, or waiting for the
+     * "install unknown apps" switch, and deleting it under the updater would only fail the update.
+     */
     private fun clearCaches() {
         lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                cacheDir.listFiles()?.forEach { it.deleteRecursively() }
+            try {
+                withContext(Dispatchers.IO) {
+                    cacheDir.listFiles()
+                        ?.filter { it.name != Updater.UPDATES_DIR }
+                        ?.forEach { it.deleteRecursively() }
+                }
+                ThumbnailStore.get(this@SettingsActivity).clearMemory()
+                Toast.makeText(this@SettingsActivity, R.string.settings_cleared, Toast.LENGTH_SHORT).show()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Clearing the cache failed", e)
             }
-            Toast.makeText(this@SettingsActivity, R.string.settings_cleared, Toast.LENGTH_SHORT).show()
             updateCacheSize()
         }
     }
@@ -160,5 +178,9 @@ class SettingsActivity : AppCompatActivity() {
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
+    }
+
+    private companion object {
+        const val TAG = "SettingsActivity"
     }
 }

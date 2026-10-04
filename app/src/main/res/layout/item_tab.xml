@@ -16,10 +16,15 @@
         android:layout_marginEnd="10dp"
         android:background="?attr/colorPrimary" />
 
+    <!-- The page the tab was left on; the document icon until one has been drawn. -->
     <ImageView
-        android:layout_width="26dp"
-        android:layout_height="26dp"
+        android:id="@+id/tabThumb"
+        android:layout_width="44dp"
+        android:layout_height="60dp"
+        android:background="?attr/colorSurfaceContainerHighest"
         android:contentDescription="@null"
+        android:padding="1dp"
+        android:scaleType="fitCenter"
         android:src="@drawable/ic_description"
         app:tint="@color/type_pdf" />
 
@@ -53,5 +58,6 @@
         android:layout_height="40dp"
         android:background="?attr/selectableItemBackgroundBorderless"
         android:contentDescription="@string/close_tab"
-        android:src="@drawable/ic_close" />
+        android:src="@drawable/ic_close"
+        app:tint="?attr/colorOnSurfaceVariant" />
 </LinearLayout>

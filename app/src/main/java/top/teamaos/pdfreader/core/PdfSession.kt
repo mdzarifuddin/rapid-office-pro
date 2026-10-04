@@ -73,8 +73,12 @@ class PdfSession private constructor(
      *
      * Reentrant, being a plain monitor: rotating a page takes it, and the page it opens takes it
      * again on the way through.
+     *
+     * One lock for the whole process, not one per document. pdfium's state is global, and with
+     * several tabs open — or a save being verified by opening the new file — a per-document lock
+     * still let two documents' calls into pdfium at the same time.
      */
-    private val pdfium = Any()
+    private val pdfium: Any get() = PDFIUM_LOCK
 
     /** Open [PdfPage] handles, least-recently-used first. Render-thread only. */
     private val pageLru = LinkedHashMap<Int, PdfPage>(PAGE_LRU_SIZE, 0.75f, true)
@@ -509,6 +513,9 @@ class PdfSession private constructor(
     }
 
     companion object {
+        /** See [pdfium]. */
+        private val PDFIUM_LOCK = Any()
+
         private const val POINTS_DPI = 72
         private const val PROC_FD_PREFIX = "/proc/self/fd/"
 

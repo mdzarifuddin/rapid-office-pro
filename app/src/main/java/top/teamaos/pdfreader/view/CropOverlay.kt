@@ -149,10 +149,14 @@ class CropOverlay @JvmOverloads constructor(
     }
 
     private fun applyDrag(dx: Float, dy: Float) {
+        // A banner or a till receipt can be narrower on screen than the minimum frame; the frame
+        // may then be as small as the page, never larger, or the ranges below would be empty.
+        val minWidth = min(minSize, pageRect.width())
+        val minHeight = min(minSize, pageRect.height())
         when (dragMode) {
             Drag.MOVE -> {
-                val shiftX = dx.coerceIn(pageRect.left - cropRect.left, pageRect.right - cropRect.right)
-                val shiftY = dy.coerceIn(pageRect.top - cropRect.top, pageRect.bottom - cropRect.bottom)
+                val shiftX = dx.clampTo(pageRect.left - cropRect.left, pageRect.right - cropRect.right)
+                val shiftY = dy.clampTo(pageRect.top - cropRect.top, pageRect.bottom - cropRect.bottom)
                 cropRect.offset(shiftX, shiftY)
                 return
             }
@@ -160,18 +164,21 @@ class CropOverlay @JvmOverloads constructor(
             else -> Unit
         }
         if (dragMode in setOf(Drag.LEFT, Drag.TOP_LEFT, Drag.BOTTOM_LEFT)) {
-            cropRect.left = (cropRect.left + dx).coerceIn(pageRect.left, cropRect.right - minSize)
+            cropRect.left = (cropRect.left + dx).clampTo(pageRect.left, cropRect.right - minWidth)
         }
         if (dragMode in setOf(Drag.RIGHT, Drag.TOP_RIGHT, Drag.BOTTOM_RIGHT)) {
-            cropRect.right = (cropRect.right + dx).coerceIn(cropRect.left + minSize, pageRect.right)
+            cropRect.right = (cropRect.right + dx).clampTo(cropRect.left + minWidth, pageRect.right)
         }
         if (dragMode in setOf(Drag.TOP, Drag.TOP_LEFT, Drag.TOP_RIGHT)) {
-            cropRect.top = (cropRect.top + dy).coerceIn(pageRect.top, cropRect.bottom - minSize)
+            cropRect.top = (cropRect.top + dy).clampTo(pageRect.top, cropRect.bottom - minHeight)
         }
         if (dragMode in setOf(Drag.BOTTOM, Drag.BOTTOM_LEFT, Drag.BOTTOM_RIGHT)) {
-            cropRect.bottom = (cropRect.bottom + dy).coerceIn(cropRect.top + minSize, pageRect.bottom)
+            cropRect.bottom = (cropRect.bottom + dy).clampTo(cropRect.top + minHeight, pageRect.bottom)
         }
     }
+
+    /** [coerceIn] that cannot throw: an empty range, from rounding or a tiny page, pins to [low]. */
+    private fun Float.clampTo(low: Float, high: Float): Float = if (high < low) low else coerceIn(low, high)
 
     override fun onDraw(canvas: Canvas) {
         if (pageRect.isEmpty) return

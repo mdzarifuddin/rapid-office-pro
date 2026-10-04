@@ -80,13 +80,16 @@
         android:layout_height="42dp"
         android:background="?attr/selectableItemBackgroundBorderless"
         android:contentDescription="@string/tab_favourites"
-        android:src="@drawable/ic_star_border" />
+        android:src="@drawable/ic_star_border"
+        app:tint="?attr/colorOnSurfaceVariant" />
 
     <ImageButton
         android:id="@+id/overflowButton"
-        android:layout_width="36dp"
+        android:layout_width="40dp"
         android:layout_height="42dp"
+        android:layout_marginEnd="4dp"
         android:background="?attr/selectableItemBackgroundBorderless"
         android:contentDescription="@string/action_settings"
-        android:src="@drawable/ic_more_vert" />
+        android:src="@drawable/ic_more_vert"
+        app:tint="?attr/colorOnSurfaceVariant" />
 </LinearLayout>

@@ -6,12 +6,25 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <com.google.android.material.appbar.MaterialToolbar
-        android:id="@+id/toolbar"
+    <!--
+      The same coloured header as the home screen, extended under the status bar (top inset is
+      applied to this frame). The Material Symbols arrow is a plain white vector with no tint of
+      its own, so the toolbar has to sit on a dark colour; see SettingsToolbar.
+    -->
+    <FrameLayout
+        android:id="@+id/header"
         android:layout_width="match_parent"
-        android:layout_height="?attr/actionBarSize"
-        app:navigationIcon="@drawable/ic_arrow_back"
-        app:title="@string/action_settings" />
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_header_gradient">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            style="@style/SettingsToolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            app:navigationIcon="@drawable/ic_arrow_back"
+            app:title="@string/action_settings" />
+    </FrameLayout>
 
     <ScrollView
         android:layout_width="match_parent"

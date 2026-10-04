@@ -53,7 +53,8 @@ object LegacyOfficeParser {
         val fcClx = Ole2File.i32(document, 0x01A2)
         val lcbClx = Ole2File.i32(document, 0x01A6)
 
-        if (table != null && lcbClx > 0 && fcClx >= 0 && fcClx + lcbClx <= table.size) {
+        // Compared as `length <= size - start` so a huge length cannot wrap round and pass.
+        if (table != null && lcbClx > 0 && fcClx >= 0 && fcClx <= table.size && lcbClx <= table.size - fcClx) {
             fromPieceTable(document, table, fcClx, lcbClx)?.let { return it }
         }
 
@@ -93,7 +94,7 @@ object LegacyOfficeParser {
             }
         }
         if (pieceTableStart < 0 || pieceTableLength <= 0) return null
-        if (pieceTableStart + pieceTableLength > table.size) return null
+        if (pieceTableStart > table.size || pieceTableLength > table.size - pieceTableStart) return null
 
         // A PlcPcd: n+1 character positions, then n eight-byte descriptors.
         val pieceCount = (pieceTableLength - 4) / 12
@@ -145,20 +146,30 @@ object LegacyOfficeParser {
         val sheets = readBiffSheets(workbook)
         if (sheets.isEmpty()) return null
 
+        val limits = GridLimits()
         val sections = sheets.map { sheet ->
-            val columns = (sheet.widest + 1).coerceAtLeast(1)
-            val rows = (0..sheet.tallest).map { row ->
-                (0 until columns).map { column ->
-                    val value = sheet.cells[row.toLong() shl 20 or column.toLong()]
-                    GridCell(
-                        text = value?.text.orEmpty(),
-                        align = if (value?.numeric == true) Align.RIGHT else Align.LEFT,
-                    )
+            checkCancelled()
+            val columns = (sheet.widest + 1).coerceIn(1, MAX_COLUMNS)
+            // The cells were collected in whatever order the records came; the grid wants them
+            // row by row, which sorting the packed row-and-column keys gives directly.
+            val builder = GridBuilder(limits)
+            val left = builder.styleOf(GridStyle(align = Align.LEFT))
+            val right = builder.styleOf(GridStyle(align = Align.RIGHT))
+            for (key in sheet.cells.keys.sorted()) {
+                val value = sheet.cells.getValue(key)
+                val auto = GridData.looksNumeric(value.text, 0, value.text.length)
+                // A stored style only where the grid's own number guess would be wrong.
+                val style = when {
+                    auto == value.numeric -> 0
+                    value.numeric -> right
+                    else -> left
                 }
+                builder.put((key shr 20).toInt(), (key and 0xFFFFF).toInt(), value.text, style)
+                if (builder.full) break
             }
             Section.Grid(
                 title = sheet.name,
-                rows = rows,
+                grid = builder.build(),
                 columnWidthsPt = List(columns) { DEFAULT_COLUMN_PT },
             )
         }
@@ -167,8 +178,11 @@ object LegacyOfficeParser {
             displayName = displayName,
             sections = sections,
             outline = sections.mapIndexed { index, section -> OutlineEntry(section.title, index) },
-            limitationNote = "This is an older Excel (.xls) file. Every cell value is shown; " +
-                "cell colours and fonts are not.",
+            limitationNote = listOfNotNull(
+                "This is an older Excel (.xls) file. Every cell value is shown; " +
+                    "cell colours and fonts are not.",
+                limits.note,
+            ).joinToString(" "),
         )
     }
 
@@ -180,7 +194,7 @@ object LegacyOfficeParser {
         var tallest = 0
 
         fun put(row: Int, column: Int, cell: BiffCell) {
-            if (row > MAX_ROWS || column > MAX_COLUMNS || cell.text.isEmpty()) return
+            if (row >= MAX_ROWS || column >= MAX_COLUMNS || cell.text.isEmpty() || cells.size >= MAX_CELLS) return
             cells[row.toLong() shl 20 or column.toLong()] = cell
             if (row > tallest) tallest = row
             if (column > widest) widest = column
@@ -277,7 +291,9 @@ object LegacyOfficeParser {
                         sheet.put(row, first + index, BiffCell(formatDouble(value), true))
                     }
                 }
-                RECORD_BOOLERR -> {
+                // Eight bytes or it is not a BOOLERR worth reading; a short one would index past
+                // the end of the stream.
+                RECORD_BOOLERR -> if (length >= 8) {
                     val row = Ole2File.u16(data, body)
                     val column = Ole2File.u16(data, body + 2)
                     val value = data[body + 6].toInt() and 0xFF
@@ -350,6 +366,9 @@ object LegacyOfficeParser {
             } else {
                 0
             }
+            // A negative or impossible skip means the table is damaged; what was read so far is
+            // kept rather than walking the offset backwards or off the end.
+            if (extraBytes < 0 || richRuns * 4L + extraBytes > data.size) break
 
             text.setLength(0)
             var remaining = characters
@@ -494,12 +513,13 @@ object LegacyOfficeParser {
                 val type = Ole2File.u16(data, offset + 2)
                 val length = Ole2File.i32(data, offset + 4)
                 val body = offset + 8
-                if (length < 0 || body + length > to) return
+                if (length < 0 || length > to - body) return
 
                 when {
                     type == TYPE_SLIDE -> {
-                        current = mutableListOf()
-                        slides += current!!
+                        val slide = mutableListOf<String>()
+                        current = slide
+                        slides += slide
                         walk(body, body + length, depth + 1)
                     }
                     versionInstance and 0x000F == 0x000F -> walk(body, body + length, depth + 1)
@@ -547,8 +567,10 @@ object LegacyOfficeParser {
     private const val TYPE_TEXT_CHARS = 4000
     private const val TYPE_TEXT_BYTES = 4008
 
-    private const val MAX_ROWS = 20000
-    private const val MAX_COLUMNS = 128
+    /** The most an .xls can hold: 65,536 rows of 256 columns. */
+    private const val MAX_ROWS = 65536
+    private const val MAX_COLUMNS = 256
+    private const val MAX_CELLS = 4_000_000
     private const val MAX_STRINGS = 200000
     private const val MAX_CHARACTERS = 8_000_000
     private const val MAX_DEPTH = 24

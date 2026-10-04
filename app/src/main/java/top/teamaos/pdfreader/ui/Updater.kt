@@ -12,6 +12,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.core.content.FileProvider
 import androidx.lifecycle.LifecycleCoroutineScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
@@ -36,11 +37,27 @@ import kotlin.coroutines.coroutineContext
  */
 object Updater {
 
-    class Release(val version: String, val notes: String, val apkUrl: String, val sizeBytes: Long)
+    /** The first build whose APK name carries its build number; see [isNewer]. */
+    private const val FIRST_NUMBERED_BUILD = 12
+
+    /** "-b12" in "RapidOfficePro-v1.0-b12.apk". */
+    private val BUILD_IN_NAME = Regex("""-b(\d+)\.apk$""", RegexOption.IGNORE_CASE)
+
+    /**
+     * [build] is the versionCode the APK was built with, read from its file name
+     * ("RapidOfficePro-v1.0-b12.apk"), or null for releases made before builds were numbered.
+     */
+    class Release(
+        val version: String,
+        val notes: String,
+        val apkUrl: String,
+        val sizeBytes: Long,
+        val build: Int? = null,
+    )
 
     /** The newest published release, or null if it cannot be reached or has no APK attached. */
     suspend fun latestRelease(): Release? = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val connection = open("https://api.github.com/repos/${BuildConfig.UPDATE_REPO}/releases/latest")
             connection.setRequestProperty("Accept", "application/vnd.github+json")
             connection.use { if (it.responseCode != 200) null else it.inputStream.bufferedReader().readText() }
@@ -49,11 +66,13 @@ object Updater {
                     val assets = json.optJSONArray("assets")
                     var apkUrl: String? = null
                     var size = 0L
+                    var build: Int? = null
                     for (i in 0 until (assets?.length() ?: 0)) {
                         val asset = assets!!.getJSONObject(i)
                         if (asset.optString("name").endsWith(".apk", ignoreCase = true)) {
                             apkUrl = asset.optString("browser_download_url")
                             size = asset.optLong("size")
+                            build = BUILD_IN_NAME.find(asset.optString("name"))?.groupValues?.get(1)?.toIntOrNull()
                             break
                         }
                     }
@@ -63,14 +82,29 @@ object Updater {
                             notes = json.optString("body").trim(),
                             apkUrl = it,
                             sizeBytes = size,
+                            build = build,
                         )
                     }
                 }
-        }.getOrNull()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Offline, rate-limited, or a malformed reply: all mean "no update to offer right now".
+            null
+        }
     }
 
-    /** True when [release] is newer than the version running now. "2.10" is newer than "2.9". */
+    /**
+     * True when [release] is newer than the version running now.
+     *
+     * Decided by build number, not by name. The app was renamed back to 1.0 after 2.6, so names
+     * alone would call every new release older than the old ones; the build number only ever goes
+     * up. Releases from before builds were numbered are all older than this one.
+     */
     fun isNewer(release: Release): Boolean {
+        release.build?.let { return it > BuildConfig.VERSION_CODE }
+        if (BuildConfig.VERSION_CODE >= FIRST_NUMBERED_BUILD) return false
+        // "2.10" is newer than "2.9".
         val running = parts(BuildConfig.VERSION_NAME)
         val offered = parts(release.version)
         for (i in 0 until maxOf(running.size, offered.size)) {
@@ -93,7 +127,7 @@ object Updater {
         scope.launch {
             if (!quiet) Toast.makeText(activity, R.string.update_checking, Toast.LENGTH_SHORT).show()
             val release = latestRelease()
-            if (activity.isFinishing) return@launch
+            if (!isAlive(activity)) return@launch
             when {
                 release == null -> if (!quiet) {
                     Toast.makeText(activity, R.string.update_unreachable, Toast.LENGTH_LONG).show()
@@ -110,7 +144,19 @@ object Updater {
         }
     }
 
+    /**
+     * Every step here resumes after a network wait, and the screen that started it may have been
+     * rotated or closed meanwhile. A dialog shown on (or dismissed from) a destroyed activity throws,
+     * so each step checks first and simply stops if its screen is gone.
+     */
+    private fun isAlive(activity: Activity): Boolean = !activity.isFinishing && !activity.isDestroyed
+
+    private fun dismissSafely(dialog: AlertDialog, activity: Activity) {
+        if (dialog.isShowing && !activity.isDestroyed) runCatching { dialog.dismiss() }
+    }
+
     private fun offer(activity: Activity, scope: LifecycleCoroutineScope, release: Release) {
+        if (!isAlive(activity)) return
         val sizeMb = if (release.sizeBytes > 0) " (%.1f MB)".format(release.sizeBytes / 1_048_576.0) else ""
         val message = buildString {
             append(activity.getString(R.string.update_available_detail, BuildConfig.VERSION_NAME, release.version))
@@ -126,6 +172,7 @@ object Updater {
     }
 
     private fun download(activity: Activity, scope: LifecycleCoroutineScope, release: Release) {
+        if (!isAlive(activity)) return
         val progress = ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             val pad = (20 * activity.resources.displayMetrics.density).toInt()
@@ -140,10 +187,19 @@ object Updater {
             .show()
 
         job = scope.launch {
-            val file = runCatching {
+            // Cancellation (the Cancel button, or the screen being destroyed on rotation) has to
+            // propagate rather than be read as a failed download: the old runCatching swallowed it,
+            // then dismissed the dialog of an activity that no longer existed, and crashed.
+            val file = try {
                 downloadTo(activity, release) { percent -> progress.post { progress.progress = percent } }
-            }.getOrNull()
-            dialog.dismiss()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            } finally {
+                dismissSafely(dialog, activity)
+            }
+            if (!isAlive(activity)) return@launch
             if (file == null) {
                 Toast.makeText(activity, R.string.update_download_failed, Toast.LENGTH_LONG).show()
                 return@launch
@@ -154,7 +210,7 @@ object Updater {
 
     private suspend fun downloadTo(context: Context, release: Release, onProgress: (Int) -> Unit): File? =
         withContext(Dispatchers.IO) {
-            val directory = File(context.cacheDir, "updates").apply {
+            val directory = File(context.cacheDir, UPDATES_DIR).apply {
                 deleteRecursively()
                 mkdirs()
             }
@@ -195,6 +251,11 @@ object Updater {
      * be allowed to install apps; that screen is opened, and the install is offered again after.
      */
     private fun install(activity: Activity, apk: File) {
+        if (!isAlive(activity)) {
+            // Keep the download: the next screen to resume offers it again.
+            pendingInstall = apk
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !activity.packageManager.canRequestPackageInstalls()) {
             MaterialAlertDialogBuilder(activity)
                 .setTitle(R.string.update_permission_title)
@@ -212,11 +273,15 @@ object Updater {
                 .show()
             return
         }
-        val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", apk)
-        val intent = Intent(Intent.ACTION_VIEW)
-            .setDataAndType(uri, "application/vnd.android.package-archive")
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        runCatching { activity.startActivity(intent) }.onFailure {
+        // getUriForFile throws IllegalArgumentException if the file is outside the provider's paths,
+        // so it shares the startActivity guard rather than crashing the screen.
+        runCatching {
+            val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", apk)
+            val intent = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            activity.startActivity(intent)
+        }.onFailure {
             Toast.makeText(activity, R.string.update_download_failed, Toast.LENGTH_LONG).show()
         }
     }
@@ -246,6 +311,9 @@ object Updater {
         } finally {
             disconnect()
         }
+
+    /** Subdirectory of cacheDir holding the APK; Settings' "Clear cache" leaves it alone. */
+    const val UPDATES_DIR = "updates"
 
     private const val TIMEOUT_MS = 20_000
     private const val MAX_NOTES_CHARS = 1500

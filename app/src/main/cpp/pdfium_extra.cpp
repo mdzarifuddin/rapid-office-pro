@@ -224,6 +224,27 @@ const PdfiumSymbols &symbols() {
 
 }  // namespace
 
+/**
+ * Link targets come straight out of the PDF and may be Latin-1 or 4-byte UTF-8, neither of which
+ * is the "modified UTF-8" NewStringUTF requires; CheckJNI aborts the process on them. Every byte
+ * above ASCII is percent-encoded instead, which is also exactly what a URI wants.
+ */
+static std::string asciiOnly(const std::string &text) {
+    static const char hex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(text.size());
+    for (unsigned char c : text) {
+        if (c >= 0x80 || c == 0) {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 0x0F];
+        } else {
+            out += (char) c;
+        }
+    }
+    return out;
+}
+
 extern "C" {
 
 JNIEXPORT jboolean JNICALL
@@ -555,9 +576,21 @@ Java_top_teamaos_pdfreader_core_PdfNative_nativeLinksOnPage(
         return nullptr;
     }
     jclass stringClass = env->FindClass("java/lang/String");
+    if (stringClass == nullptr) {
+        env->ExceptionClear();
+        return nullptr;
+    }
     jobjectArray result = env->NewObjectArray((jsize) entries.size(), stringClass, nullptr);
+    if (result == nullptr) {
+        env->ExceptionClear();
+        return nullptr;
+    }
     for (jsize index = 0; index < (jsize) entries.size(); ++index) {
-        jstring value = env->NewStringUTF(entries[index].c_str());
+        jstring value = env->NewStringUTF(asciiOnly(entries[index]).c_str());
+        if (value == nullptr) {
+            env->ExceptionClear();
+            continue;
+        }
         env->SetObjectArrayElement(result, index, value);
         env->DeleteLocalRef(value);
     }

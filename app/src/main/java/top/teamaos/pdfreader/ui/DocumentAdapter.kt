@@ -79,6 +79,14 @@ class DocumentAdapter(
         binding.favouriteButton.setImageResource(
             if (record.isFavorite) R.drawable.ic_star else R.drawable.ic_star_border,
         )
+        // The icons are drawn white and coloured by tint; untinted they vanish on a light list.
+        binding.favouriteButton.imageTintList = android.content.res.ColorStateList.valueOf(
+            com.google.android.material.color.MaterialColors.getColor(
+                binding.favouriteButton,
+                if (record.isFavorite) androidx.appcompat.R.attr.colorPrimary
+                else com.google.android.material.R.attr.colorOnSurfaceVariant,
+            ),
+        )
         binding.favouriteButton.setOnClickListener { onToggleFavourite(record) }
         binding.overflowButton.setOnClickListener { view -> showOverflow(view, record) }
         holder.itemView.setOnClickListener { onOpen(record) }
@@ -139,9 +147,11 @@ class DocumentAdapter(
 
     private fun colourFor(extension: String): Int = when (extension) {
         "PDF" -> R.color.type_pdf
-        "DOC", "DOCX", "RTF", "ODT" -> R.color.type_doc
-        "XLS", "XLSX", "CSV", "ODS" -> R.color.type_xls
-        "PPT", "PPTX", "ODP" -> R.color.type_ppt
+        "DOC", "DOCX", "DOCM", "DOT", "DOTX", "DOTM", "RTF", "ODT", "OTT",
+        "WPD", "WP", "WP5", "WP6" -> R.color.type_doc
+        "EPUB", "MOBI", "AZW", "AZW3", "PRC" -> R.color.type_book
+        "XLS", "XLSX", "XLSM", "XLT", "XLTX", "XLTM", "XLSB", "CSV", "TSV", "TAB", "ODS", "OTS" -> R.color.type_xls
+        "PPT", "PPTX", "PPTM", "PPS", "PPSX", "PPSM", "POT", "POTX", "POTM", "ODP", "OTP", "ODG" -> R.color.type_ppt
         else -> R.color.type_other
     }
 

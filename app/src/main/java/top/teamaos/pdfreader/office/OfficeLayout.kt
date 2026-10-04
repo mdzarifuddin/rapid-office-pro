@@ -65,6 +65,59 @@ object OfficeLayout {
 
         class Image(val data: ByteArray, val bounds: RectF) : PageItem()
 
+        /**
+         * A page's worth of spreadsheet rows, drawn straight from [data] by the view.
+         *
+         * Nothing per cell is built here. Measuring every cell up front was what made a large
+         * sheet take minutes and hundreds of megabytes to open; drawing only the cells on screen
+         * costs the same for ten rows as for a million.
+         *
+         * Everything is in layout units on the page: [columnX] holds each column's left edge and,
+         * last, the right edge of the final column; the column letters sit in a header row at
+         * [top], the rows [firstRow] until [endRow] follow it, and the row numbers sit in the
+         * gutter from [left] to `columnX[0]`.
+         */
+        class Grid(
+            val data: GridData,
+            val firstRow: Int,
+            val endRow: Int,
+            val left: Float,
+            val top: Float,
+            val columnX: FloatArray,
+            val columnNames: Array<String>,
+            val rowHeight: Float,
+            val textSize: Float,
+            val padding: Float,
+        ) : PageItem() {
+            val bodyTop: Float get() = top + rowHeight
+            val bottom: Float get() = bodyTop + (endRow - firstRow) * rowHeight
+            val right: Float get() = columnX.last()
+            val columns: Int get() = columnX.size - 1
+
+            /** The column under [x], or -1 outside the cells. */
+            fun columnAt(x: Float): Int {
+                if (x < columnX[0] || x >= right) return -1
+                var low = 0
+                var high = columns - 1
+                while (low < high) {
+                    val middle = (low + high + 1) ushr 1
+                    if (columnX[middle] <= x) low = middle else high = middle - 1
+                }
+                return low
+            }
+
+            /** The sheet row under [y], or -1 outside this page's rows. */
+            fun rowAt(y: Float): Int {
+                if (y < bodyTop || y >= bottom) return -1
+                return firstRow + ((y - bodyTop) / rowHeight).toInt().coerceIn(0, endRow - firstRow - 1)
+            }
+
+            fun cellBounds(row: Int, column: Int): RectF {
+                val y = bodyTop + (row - firstRow) * rowHeight
+                return RectF(columnX[column], y, columnX[column + 1], y + rowHeight)
+            }
+        }
+
         class Box(
             val bounds: RectF,
             val fill: Int,
@@ -77,6 +130,8 @@ object OfficeLayout {
         val pages: List<LaidOutPage>,
         val widestPage: Float,
         val tallestPage: Float,
+        /** Set when laying out had to stop short, for the screen to show above the document. */
+        val notice: String? = null,
     )
 
     /**
@@ -91,6 +146,7 @@ object OfficeLayout {
     ): LaidOutDocument {
         val pages = mutableListOf<LaidOutPage>()
         document.sections.forEachIndexed { index, section ->
+            checkCancelled()
             when (section) {
                 is Section.Flow -> pages += flowPages(section, index)
                 is Section.Grid -> pages += gridPages(section, index)
@@ -201,11 +257,13 @@ object OfficeLayout {
                 is Block.Picture -> {
                     var width = block.widthPt * UNITS_PER_POINT
                     var height = block.heightPt * UNITS_PER_POINT
-                    if (width <= 0f || height <= 0f) continue
+                    // Written as "not positive" so NaN is skipped too; it fails every comparison.
+                    if (!(width > 0f && height > 0f) || !width.isFinite() || !height.isFinite()) continue
                     val shrink = min(1f, contentWidth / width)
                     width *= shrink
                     height *= shrink
-                    val maxHeight = bottom - top
+                    // Margins larger than the page leave no room; still fit to something positive.
+                    val maxHeight = max(MIN_CONTENT_UNITS, bottom - top)
                     if (height > maxHeight) {
                         val fit = maxHeight / height
                         width *= fit
@@ -266,7 +324,8 @@ object OfficeLayout {
             fill,
             stroke,
             strokeWidth,
-        )
+        )        // Grids are only ever whole pages of a sheet, never placed inside a table.
+        is PageItem.Grid -> this
     }
 
     /**
@@ -276,7 +335,9 @@ object OfficeLayout {
      * over a page boundary — a row cut in half down the middle is worse than a gap.
      */
     private fun layOutTable(table: Block.Table, contentWidth: Float): List<LaidOutRow> {
-        val columns = table.rows.maxOfOrNull { row -> row.cells.sumOf { it.columnSpan.coerceAtLeast(1) } }
+        val columns = table.rows
+            .maxOfOrNull { row -> row.cells.sumOf { it.columnSpan.coerceIn(1, MAX_TABLE_COLUMNS) } }
+            ?.coerceAtMost(MAX_TABLE_COLUMNS)
             ?: return emptyList()
         if (columns <= 0) return emptyList()
         val widths = columnWidths(table, columns, contentWidth)
@@ -291,7 +352,7 @@ object OfficeLayout {
 
             row.cells.forEach { cell ->
                 if (column >= columns) return@forEach
-                val span = cell.columnSpan.coerceAtLeast(1)
+                val span = cell.columnSpan.coerceIn(1, MAX_TABLE_COLUMNS)
                 val cellWidth = (column until min(columns, column + span))
                     .fold(0f) { total, index -> total + widths[index] }
                     .coerceAtLeast(MIN_CONTENT_UNITS)
@@ -351,125 +412,61 @@ object OfficeLayout {
      */
     private fun gridPages(section: Section.Grid, sectionIndex: Int): List<LaidOutPage> {
         val gutter = GUTTER_UNITS
-        val widths = section.columnWidthsPt.map { max(MIN_COLUMN_UNITS, it * UNITS_PER_POINT) }
-        val totalWidth = gutter + widths.sum()
+        val data = section.grid
+        val columnCount = min(MAX_GRID_COLUMNS, max(data.columnCount, section.columnWidthsPt.size))
+        val columnX = FloatArray(columnCount + 1)
+        columnX[0] = SHEET_MARGIN + gutter
+        for (column in 0 until columnCount) {
+            val declared = section.columnWidthsPt.getOrNull(column)
+            val width = if (declared != null && declared.isFinite()) {
+                max(MIN_COLUMN_UNITS, declared * UNITS_PER_POINT)
+            } else {
+                DEFAULT_COLUMN_UNITS
+            }
+            columnX[column + 1] = columnX[column] + width
+        }
+        val names = Array(columnCount) { columnName(it) }
+        val totalWidth = columnX[columnCount] - SHEET_MARGIN
         // The page is the sheet, not a sheet of paper: a four-column table on a Letter page would
         // be scaled down to fit a width it never needed, and come out unreadably small.
         val pageWidth = max(MIN_SHEET_WIDTH, totalWidth + 2 * SHEET_MARGIN)
-        val maxRowsPerPage = max(
+        val rowsPerPage = max(
             1,
             ((Section.LETTER_HEIGHT_PT * UNITS_PER_POINT - 2 * SHEET_MARGIN - ROW_UNITS) / ROW_UNITS).toInt(),
         )
 
-        val pages = mutableListOf<LaidOutPage>()
-        var index = 0
+        // Pages are only row ranges now, so even a million rows is a few thousand small objects.
+        val rowCount = data.rowCount
+        val pages = ArrayList<LaidOutPage>(rowCount / rowsPerPage + 1)
+        var first = 0
         var pageNumber = 1
         do {
-            val items = mutableListOf<PageItem>()
-            var y = SHEET_MARGIN
-
-            // Column letters across the top, so a reference like "D14" can be found by eye.
-            items += PageItem.Box(
-                RectF(SHEET_MARGIN, y, SHEET_MARGIN + totalWidth, y + ROW_UNITS),
-                HEADER_FILL,
-                TABLE_LINE_COLOUR,
-                TABLE_LINE_UNITS,
+            if (pageNumber % 1024 == 0) checkCancelled()
+            val end = min(rowCount, first + rowsPerPage)
+            val item = PageItem.Grid(
+                data = data,
+                firstRow = first,
+                endRow = end,
+                left = SHEET_MARGIN,
+                top = SHEET_MARGIN,
+                columnX = columnX,
+                columnNames = names,
+                rowHeight = ROW_UNITS,
+                textSize = SHEET_TEXT_PT * UNITS_PER_POINT,
+                padding = CELL_PAD,
             )
-            var x = SHEET_MARGIN + gutter
-            widths.forEachIndexed { column, width ->
-                items += cellText(columnName(column), x, y, width, bold = true, align = Align.CENTRE)
-                items += PageItem.Box(
-                    RectF(x, y, x + width, y + ROW_UNITS),
-                    0,
-                    TABLE_LINE_COLOUR,
-                    TABLE_LINE_UNITS,
-                )
-                x += width
-            }
-            y += ROW_UNITS
-
-            var drawn = 0
-            while (drawn < maxRowsPerPage && index < section.rows.size) {
-                val row = section.rows[index]
-                items += cellText(
-                    (index + 1).toString(),
-                    SHEET_MARGIN,
-                    y,
-                    gutter,
-                    bold = true,
-                    align = Align.CENTRE,
-                )
-                items += PageItem.Box(
-                    RectF(SHEET_MARGIN, y, SHEET_MARGIN + gutter, y + ROW_UNITS),
-                    HEADER_FILL,
-                    TABLE_LINE_COLOUR,
-                    TABLE_LINE_UNITS,
-                )
-                var cellX = SHEET_MARGIN + gutter
-                widths.forEachIndexed { column, width ->
-                    val cell = row.getOrNull(column)
-                    if (cell != null && cell.background != 0) {
-                        items += PageItem.Box(
-                            RectF(cellX, y, cellX + width, y + ROW_UNITS),
-                            cell.background,
-                            0,
-                            0f,
-                        )
-                    }
-                    items += PageItem.Box(
-                        RectF(cellX, y, cellX + width, y + ROW_UNITS),
-                        0,
-                        TABLE_LINE_COLOUR,
-                        TABLE_LINE_UNITS,
-                    )
-                    if (cell != null && cell.text.isNotEmpty()) {
-                        items += cellText(
-                            cell.text,
-                            cellX,
-                            y,
-                            width,
-                            cell.bold,
-                            cell.align,
-                            cell.colour,
-                        )
-                    }
-                    cellX += width
-                }
-                y += ROW_UNITS
-                index++
-                drawn++
-            }
-
             pages += LaidOutPage(
                 pageWidth,
-                y + SHEET_MARGIN,
-                items,
+                item.bottom + SHEET_MARGIN,
+                listOf(item),
                 Color.WHITE,
                 sectionIndex,
                 if (pageNumber == 1) section.title else "${section.title} · $pageNumber",
             )
             pageNumber++
-        } while (index < section.rows.size)
+            first = end
+        } while (first < rowCount)
         return pages
-    }
-
-    private fun cellText(
-        text: String,
-        x: Float,
-        y: Float,
-        width: Float,
-        bold: Boolean,
-        align: Align,
-        colour: Int = Color.BLACK,
-    ): PageItem.Text {
-        val paragraph = Paragraph(
-            spans = listOf(TextSpan(text, bold = bold, sizePt = SHEET_TEXT_PT, colour = colour)),
-            align = align,
-            spaceAfterPt = 0f,
-        )
-        val layout = buildLayout(paragraph, max(MIN_CONTENT_UNITS, width - 2 * CELL_PAD), maxLines = 1)
-        val centred = y + (ROW_UNITS - layout.height) / 2f
-        return PageItem.Text(layout, x + CELL_PAD, centred, 0, 0)
     }
 
     /** Spreadsheet column names: A, B, ... Z, AA, AB, ... */
@@ -566,7 +563,7 @@ object OfficeLayout {
             if (span.underline) mark(UnderlineSpan())
             if (span.strike) mark(StrikethroughSpan())
             if (span.monospace) mark(TypefaceSpan("monospace"))
-            mark(AbsoluteSizeSpan(ceil(span.sizePt * UNITS_PER_POINT).toInt()))
+            mark(AbsoluteSizeSpan(ceil(safeSize(span.sizePt) * UNITS_PER_POINT).toInt()))
             if (span.colour != Color.BLACK) mark(ForegroundColorSpan(span.colour))
             if (span.highlight != 0) mark(BackgroundColorSpan(span.highlight))
             when (span.script) {
@@ -587,7 +584,10 @@ object OfficeLayout {
         return StaticLayout.Builder
             .obtain(builder, 0, builder.length, paint, width.toInt().coerceAtLeast(1))
             .setAlignment(alignment)
-            .setLineSpacing(0f, paragraph.lineSpacing.coerceIn(0.6f, 3f))
+            .setLineSpacing(
+                0f,
+                paragraph.lineSpacing.takeIf { it.isFinite() }?.coerceIn(0.6f, 3f) ?: 1f,
+            )
             .setIncludePad(false)
             .setMaxLines(maxLines)
             .setEllipsize(if (maxLines == 1) android.text.TextUtils.TruncateAt.END else null)
@@ -601,8 +601,15 @@ object OfficeLayout {
 
     private fun sizeOf(paragraph: Paragraph): Float {
         val first = paragraph.spans.firstOrNull()?.sizePt ?: TextSpan.DEFAULT_SIZE_PT
-        return first * UNITS_PER_POINT
+        return safeSize(first) * UNITS_PER_POINT
     }
+
+    /**
+     * A text size the layout engine can take. Parsers read sizes straight out of the file, and a
+     * NaN or a size of a billion points measures to nonsense line heights or overflows outright.
+     */
+    private fun safeSize(sizePt: Float): Float =
+        if (sizePt.isFinite() && sizePt > 0f) min(sizePt, MAX_TEXT_PT) else TextSpan.DEFAULT_SIZE_PT
 
     private const val MIN_CONTENT_UNITS = 8f
     private const val PAD = 2f * UNITS_PER_POINT
@@ -610,9 +617,9 @@ object OfficeLayout {
     private const val PICTURE_GAP = 8f * UNITS_PER_POINT
     private const val TABLE_GAP = 8f * UNITS_PER_POINT
     private const val MIN_ROW_UNITS = 14f * UNITS_PER_POINT
-    private const val TABLE_LINE_UNITS = 0.6f * UNITS_PER_POINT
+    const val TABLE_LINE_UNITS = 0.6f * UNITS_PER_POINT
     private const val RULE_UNITS = 0.8f * UNITS_PER_POINT
-    private const val TABLE_LINE_COLOUR = 0xFFB9BFC9.toInt()
+    const val TABLE_LINE_COLOUR = 0xFFB9BFC9.toInt()
     private const val RULE_COLOUR = 0xFFCBD2DC.toInt()
 
     private const val SHEET_MARGIN = 18f * UNITS_PER_POINT
@@ -623,7 +630,17 @@ object OfficeLayout {
 
     /** Below this a sheet page would be a sliver on screen; above it, it is its own width. */
     private const val MIN_SHEET_WIDTH = 300f * UNITS_PER_POINT
-    private const val HEADER_FILL = 0xFFEDF1F6.toInt()
+    const val HEADER_FILL = 0xFFEDF1F6.toInt()
+
+    /** Every column a sheet can have here; matches what the parsers keep. */
+    private const val MAX_GRID_COLUMNS = GridBuilder.MAX_COLUMNS
+    private const val DEFAULT_COLUMN_UNITS = 48f * UNITS_PER_POINT
+
+    /** Word's own limit is 63; a table claiming more is broken, and each column costs layouts. */
+    private const val MAX_TABLE_COLUMNS = 64
+
+    /** Text sizes outside this are a broken file, and a huge one overflows the layout's ints. */
+    private const val MAX_TEXT_PT = 400f
 
     private const val SLIDE_PAD = 6f * UNITS_PER_POINT
 }

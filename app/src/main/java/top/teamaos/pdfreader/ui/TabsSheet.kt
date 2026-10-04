@@ -103,8 +103,19 @@ object TabsSheet {
             val controller = items[position]
             val context = holder.itemView.context
             holder.binding.tabTitle.text = controller.displayName
-            holder.binding.tabSubtitle.text =
-                context.getString(R.string.pages_count, controller.pageCount)
+            val thumb = controller.snapshot
+            if (thumb != null) {
+                holder.binding.tabThumb.imageTintList = null
+                holder.binding.tabThumb.setImageBitmap(thumb)
+            } else {
+                holder.binding.tabThumb.imageTintList =
+                    android.content.res.ColorStateList.valueOf(context.getColor(R.color.type_pdf))
+                holder.binding.tabThumb.setImageResource(R.drawable.ic_description)
+            }
+            val page = (controller.lastPosition?.getOrNull(0)?.toInt() ?: 0) + 1
+            holder.binding.tabSubtitle.text = context.getString(
+                R.string.tab_page_of, page.coerceIn(1, controller.pageCount.coerceAtLeast(1)), controller.pageCount,
+            )
             holder.binding.activeIndicator.visibility =
                 if (controller === active) View.VISIBLE else View.INVISIBLE
             holder.itemView.setOnClickListener { onSwitch(controller) }

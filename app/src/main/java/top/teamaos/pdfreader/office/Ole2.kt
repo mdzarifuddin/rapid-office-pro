@@ -1,6 +1,7 @@
 package top.teamaos.pdfreader.office
 
 import java.io.File
+import java.util.BitSet
 
 /**
  * A reader for the compound file that .doc, .xls and .ppt are stored in.
@@ -60,20 +61,30 @@ class Ole2File private constructor(
         size: Int,
         mini: Boolean,
     ): ByteArray? {
-        val out = ByteArray(size)
+        // A stream cannot hold more than the bytes it is read out of. The size in the directory is
+        // the file's word for it, and a damaged or hostile file can claim 96 MB in a 4 KB source.
+        val out = ByteArray(minOf(size, source.size))
         var written = 0
         var sector = start
         var guard = 0
-        while (sector >= 0 && written < size && guard++ < MAX_CHAIN) {
-            val offset = if (mini) sector * unit else (sector + 1) * unit
-            if (offset < 0 || offset + unit > source.size) break
-            val count = minOf(unit, size - written)
-            System.arraycopy(source, offset, out, written, count)
+        // A chain that loops back on itself would copy the same sectors until the guard ran out.
+        val visited = BitSet()
+        while (sector >= 0 && written < out.size && guard++ < MAX_CHAIN) {
+            if (visited.get(sector)) break
+            visited.set(sector)
+            val offset = sectorOffset(sector, unit, mini) ?: break
+            if (offset + unit > source.size) break
+            val count = minOf(unit, out.size - written)
+            System.arraycopy(source, offset.toInt(), out, written, count)
             written += count
             sector = table.getOrElse(sector) { END_OF_CHAIN }
             if (sector == END_OF_CHAIN || sector == FREE_SECTOR) break
         }
-        return if (written == 0) null else out
+        return when {
+            written == 0 -> null
+            written < out.size -> out.copyOf(written)
+            else -> out
+        }
     }
 
     companion object {
@@ -90,6 +101,16 @@ class Ole2File private constructor(
             0xD0.toByte(), 0xCF.toByte(), 0x11, 0xE0.toByte(),
             0xA1.toByte(), 0xB1.toByte(), 0x1A, 0xE1.toByte(),
         )
+
+        /**
+         * Where a sector starts, worked out in longs: sector numbers come straight from the file,
+         * and `(sector + 1) * 4096` in ints wraps round to a plausible-looking offset.
+         */
+        private fun sectorOffset(sector: Int, unit: Int, mini: Boolean): Long? {
+            if (sector < 0) return null
+            val offset = if (mini) sector.toLong() * unit else (sector.toLong() + 1) * unit
+            return if (offset < 0 || offset > Int.MAX_VALUE) null else offset
+        }
 
         fun looksLikeOle(file: File): Boolean = runCatching {
             file.inputStream().use { stream ->
@@ -112,7 +133,8 @@ class Ole2File private constructor(
             val miniSectorSize = 1 shl u16(data, 32)
             if (sectorSize < 128 || sectorSize > 65536 || miniSectorSize !in 8..4096) return null
 
-            val fatSectorCount = i32(data, 44)
+            // No file can have more allocation-table sectors than it has sectors at all.
+            val fatSectorCount = i32(data, 44).coerceIn(0, data.size / sectorSize)
             val firstDirectory = i32(data, 48)
             val firstMiniFat = i32(data, 60)
             val miniFatCount = i32(data, 64)
@@ -122,17 +144,21 @@ class Ole2File private constructor(
             // Where the allocation table's own sectors live: the first 109 in the header, the rest
             // chained through further sectors.
             val fatSectors = mutableListOf<Int>()
-            for (index in 0 until minOf(109, maxOf(0, fatSectorCount))) {
+            for (index in 0 until minOf(109, fatSectorCount)) {
                 val sector = i32(data, 76 + index * 4)
                 if (sector >= 0) fatSectors += sector
             }
             var difat = firstDifat
             var guard = 0
+            val visitedDifat = BitSet()
             while (difat >= 0 && guard++ < 4096 && fatSectors.size < fatSectorCount) {
-                val base = (difat + 1) * sectorSize
-                if (base + sectorSize > data.size) break
+                if (visitedDifat.get(difat)) break
+                visitedDifat.set(difat)
+                val base = sectorOffset(difat, sectorSize, mini = false)?.toInt() ?: break
+                if (base.toLong() + sectorSize > data.size) break
                 val perSector = sectorSize / 4 - 1
                 for (index in 0 until perSector) {
+                    if (fatSectors.size >= fatSectorCount) break
                     val sector = i32(data, base + index * 4)
                     if (sector >= 0) fatSectors += sector
                 }
@@ -142,8 +168,8 @@ class Ole2File private constructor(
             val entriesPerSector = sectorSize / 4
             val fat = IntArray(fatSectors.size * entriesPerSector) { END_OF_CHAIN }
             fatSectors.forEachIndexed { sectorIndex, sector ->
-                val base = (sector + 1) * sectorSize
-                if (base + sectorSize > data.size) return@forEachIndexed
+                val base = sectorOffset(sector, sectorSize, mini = false)?.toInt() ?: return@forEachIndexed
+                if (base.toLong() + sectorSize > data.size) return@forEachIndexed
                 for (index in 0 until entriesPerSector) {
                     fat[sectorIndex * entriesPerSector + index] = i32(data, base + index * 4)
                 }
@@ -192,9 +218,12 @@ class Ole2File private constructor(
             val out = java.io.ByteArrayOutputStream()
             var sector = start
             var guard = 0
+            val visited = BitSet()
             while (sector >= 0 && guard++ < MAX_CHAIN) {
-                val offset = (sector + 1) * sectorSize
-                if (offset + sectorSize > data.size) break
+                if (visited.get(sector)) break
+                visited.set(sector)
+                val offset = sectorOffset(sector, sectorSize, mini = false)?.toInt() ?: break
+                if (offset.toLong() + sectorSize > data.size) break
                 out.write(data, offset, sectorSize)
                 if (out.size() > MAX_STREAM_BYTES) break
                 sector = fat.getOrElse(sector) { END_OF_CHAIN }
@@ -217,11 +246,11 @@ class Ole2File private constructor(
         }
 
         fun u16(data: ByteArray, offset: Int): Int =
-            if (offset + 1 >= data.size) 0
+            if (offset < 0 || offset >= data.size - 1) 0
             else (data[offset].toInt() and 0xFF) or ((data[offset + 1].toInt() and 0xFF) shl 8)
 
         fun i32(data: ByteArray, offset: Int): Int =
-            if (offset + 3 >= data.size) 0
+            if (offset < 0 || offset >= data.size - 3) 0
             else (data[offset].toInt() and 0xFF) or
                 ((data[offset + 1].toInt() and 0xFF) shl 8) or
                 ((data[offset + 2].toInt() and 0xFF) shl 16) or

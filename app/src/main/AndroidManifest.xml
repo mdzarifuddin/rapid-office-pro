@@ -48,6 +48,7 @@
         <activity
             android:name=".ui.ReaderActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density"
+            android:launchMode="singleTask"
             android:exported="true"
             android:theme="@style/Theme.RapidPDF.Reader">
 
@@ -78,27 +79,129 @@
         <activity
             android:name=".ui.OfficeActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density"
+            android:launchMode="singleTop"
             android:exported="true"
             android:theme="@style/Theme.RapidPDF.Reader">
 
+            <!--
+              Everything is sniffed by content once it arrives, so the filters can afford to be
+              generous: application/octet-stream is what WhatsApp, Telegram and mail hand over for
+              an attachment they did not recognise, and a PDF that arrives this way is passed on
+              to the PDF reader.
+            -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
                 <data android:mimeType="application/msword" />
-                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
-                <data android:mimeType="application/vnd.ms-excel" />
-                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
-                <data android:mimeType="application/vnd.ms-powerpoint" />
-                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
                 <data android:mimeType="application/vnd.ms-word.document.macroenabled.12" />
+                <data android:mimeType="application/vnd.ms-word.template.macroenabled.12" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.template" />
+                <data android:mimeType="application/vnd.ms-excel" />
                 <data android:mimeType="application/vnd.ms-excel.sheet.macroenabled.12" />
+                <data android:mimeType="application/vnd.ms-excel.template.macroenabled.12" />
+                <data android:mimeType="application/vnd.ms-excel.sheet.binary.macroenabled.12" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.template" />
+                <data android:mimeType="application/vnd.ms-powerpoint" />
                 <data android:mimeType="application/vnd.ms-powerpoint.presentation.macroenabled.12" />
+                <data android:mimeType="application/vnd.ms-powerpoint.slideshow.macroenabled.12" />
+                <data android:mimeType="application/vnd.ms-powerpoint.template.macroenabled.12" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.slideshow" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.template" />
+                <data android:mimeType="application/vnd.oasis.opendocument.text" />
+                <data android:mimeType="application/vnd.oasis.opendocument.text-template" />
+                <data android:mimeType="application/vnd.oasis.opendocument.spreadsheet" />
+                <data android:mimeType="application/vnd.oasis.opendocument.spreadsheet-template" />
+                <data android:mimeType="application/vnd.oasis.opendocument.presentation" />
+                <data android:mimeType="application/vnd.oasis.opendocument.presentation-template" />
+                <data android:mimeType="application/vnd.oasis.opendocument.graphics" />
                 <data android:mimeType="application/rtf" />
-                <data android:mimeType="text/rtf" />
-                <data android:mimeType="text/plain" />
-                <data android:mimeType="text/csv" />
-                <data android:mimeType="text/comma-separated-values" />
+                <data android:mimeType="application/x-rtf" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="application/xhtml+xml" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="application/x-yaml" />
+                <data android:mimeType="application/yaml" />
+                <data android:mimeType="application/x-sh" />
+                <data android:mimeType="application/javascript" />
+                <data android:mimeType="application/sql" />
+                <data android:mimeType="application/x-subrip" />
+                <data android:mimeType="application/csv" />
+                <data android:mimeType="application/vnd.apple.pages" />
+                <data android:mimeType="application/vnd.apple.numbers" />
+                <data android:mimeType="application/vnd.apple.keynote" />
+                <data android:mimeType="application/x-iwork-pages-sffpages" />
+                <data android:mimeType="application/x-iwork-numbers-sffnumbers" />
+                <data android:mimeType="application/x-iwork-keynote-sffkey" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/x-mobipocket-ebook" />
+                <data android:mimeType="application/vnd.amazon.ebook" />
+                <data android:mimeType="application/vnd.wordperfect" />
+                <data android:mimeType="application/wordperfect" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+
+            <!-- "Share to": the same types, plus PDFs, which are handed on to the PDF reader. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/msword" />
+                <data android:mimeType="application/vnd.ms-word.document.macroenabled.12" />
+                <data android:mimeType="application/vnd.ms-word.template.macroenabled.12" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.template" />
+                <data android:mimeType="application/vnd.ms-excel" />
+                <data android:mimeType="application/vnd.ms-excel.sheet.macroenabled.12" />
+                <data android:mimeType="application/vnd.ms-excel.template.macroenabled.12" />
+                <data android:mimeType="application/vnd.ms-excel.sheet.binary.macroenabled.12" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.template" />
+                <data android:mimeType="application/vnd.ms-powerpoint" />
+                <data android:mimeType="application/vnd.ms-powerpoint.presentation.macroenabled.12" />
+                <data android:mimeType="application/vnd.ms-powerpoint.slideshow.macroenabled.12" />
+                <data android:mimeType="application/vnd.ms-powerpoint.template.macroenabled.12" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.slideshow" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.template" />
+                <data android:mimeType="application/vnd.oasis.opendocument.text" />
+                <data android:mimeType="application/vnd.oasis.opendocument.text-template" />
+                <data android:mimeType="application/vnd.oasis.opendocument.spreadsheet" />
+                <data android:mimeType="application/vnd.oasis.opendocument.spreadsheet-template" />
+                <data android:mimeType="application/vnd.oasis.opendocument.presentation" />
+                <data android:mimeType="application/vnd.oasis.opendocument.presentation-template" />
+                <data android:mimeType="application/vnd.oasis.opendocument.graphics" />
+                <data android:mimeType="application/rtf" />
+                <data android:mimeType="application/x-rtf" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="application/xhtml+xml" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="application/x-yaml" />
+                <data android:mimeType="application/yaml" />
+                <data android:mimeType="application/x-sh" />
+                <data android:mimeType="application/javascript" />
+                <data android:mimeType="application/sql" />
+                <data android:mimeType="application/x-subrip" />
+                <data android:mimeType="application/csv" />
+                <data android:mimeType="application/vnd.apple.pages" />
+                <data android:mimeType="application/vnd.apple.numbers" />
+                <data android:mimeType="application/vnd.apple.keynote" />
+                <data android:mimeType="application/x-iwork-pages-sffpages" />
+                <data android:mimeType="application/x-iwork-numbers-sffnumbers" />
+                <data android:mimeType="application/x-iwork-keynote-sffkey" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/x-mobipocket-ebook" />
+                <data android:mimeType="application/vnd.amazon.ebook" />
+                <data android:mimeType="application/vnd.wordperfect" />
+                <data android:mimeType="application/wordperfect" />
+                <data android:mimeType="application/octet-stream" />
             </intent-filter>
 
             <intent-filter>
@@ -107,22 +210,83 @@
                 <data android:scheme="file" />
                 <data android:scheme="content" />
                 <data android:host="*" />
-                <data android:pathPattern=".*\.doc" />
-                <data android:pathPattern=".*\.docx" />
-                <data android:pathPattern=".*\.docm" />
-                <data android:pathPattern=".*\.rtf" />
-                <data android:pathPattern=".*\.xls" />
-                <data android:pathPattern=".*\.xlsx" />
-                <data android:pathPattern=".*\.xlsm" />
-                <data android:pathPattern=".*\.csv" />
-                <data android:pathPattern=".*\.tsv" />
-                <data android:pathPattern=".*\.ppt" />
-                <data android:pathPattern=".*\.pptx" />
-                <data android:pathPattern=".*\.pptm" />
-                <data android:pathPattern=".*\.pps" />
-                <data android:pathPattern=".*\.ppsx" />
-                <data android:pathPattern=".*\.txt" />
-                <data android:pathPattern=".*\.md" />
+                <data android:pathPattern=".*\\.doc" />
+                <data android:pathPattern=".*\\.docx" />
+                <data android:pathPattern=".*\\.docm" />
+                <data android:pathPattern=".*\\.dot" />
+                <data android:pathPattern=".*\\.dotx" />
+                <data android:pathPattern=".*\\.dotm" />
+                <data android:pathPattern=".*\\.rtf" />
+                <data android:pathPattern=".*\\.odt" />
+                <data android:pathPattern=".*\\.ott" />
+                <data android:pathPattern=".*\\.fodt" />
+                <data android:pathPattern=".*\\.xls" />
+                <data android:pathPattern=".*\\.xlsx" />
+                <data android:pathPattern=".*\\.xlsm" />
+                <data android:pathPattern=".*\\.xlt" />
+                <data android:pathPattern=".*\\.xltx" />
+                <data android:pathPattern=".*\\.xltm" />
+                <data android:pathPattern=".*\\.xlsb" />
+                <data android:pathPattern=".*\\.ods" />
+                <data android:pathPattern=".*\\.ots" />
+                <data android:pathPattern=".*\\.csv" />
+                <data android:pathPattern=".*\\.tsv" />
+                <data android:pathPattern=".*\\.tab" />
+                <data android:pathPattern=".*\\.ppt" />
+                <data android:pathPattern=".*\\.pptx" />
+                <data android:pathPattern=".*\\.pptm" />
+                <data android:pathPattern=".*\\.pot" />
+                <data android:pathPattern=".*\\.potx" />
+                <data android:pathPattern=".*\\.potm" />
+                <data android:pathPattern=".*\\.pps" />
+                <data android:pathPattern=".*\\.ppsx" />
+                <data android:pathPattern=".*\\.ppsm" />
+                <data android:pathPattern=".*\\.odp" />
+                <data android:pathPattern=".*\\.otp" />
+                <data android:pathPattern=".*\\.odg" />
+                <data android:pathPattern=".*\\.html" />
+                <data android:pathPattern=".*\\.htm" />
+                <data android:pathPattern=".*\\.xhtml" />
+                <data android:pathPattern=".*\\.txt" />
+                <data android:pathPattern=".*\\.text" />
+                <data android:pathPattern=".*\\.md" />
+                <data android:pathPattern=".*\\.markdown" />
+                <data android:pathPattern=".*\\.log" />
+                <data android:pathPattern=".*\\.json" />
+                <data android:pathPattern=".*\\.xml" />
+                <data android:pathPattern=".*\\.yaml" />
+                <data android:pathPattern=".*\\.yml" />
+                <data android:pathPattern=".*\\.ini" />
+                <data android:pathPattern=".*\\.conf" />
+                <data android:pathPattern=".*\\.cfg" />
+                <data android:pathPattern=".*\\.toml" />
+                <data android:pathPattern=".*\\.properties" />
+                <data android:pathPattern=".*\\.srt" />
+                <data android:pathPattern=".*\\.vtt" />
+                <data android:pathPattern=".*\\.sql" />
+                <data android:pathPattern=".*\\.sh" />
+                <data android:pathPattern=".*\\.py" />
+                <data android:pathPattern=".*\\.js" />
+                <data android:pathPattern=".*\\.ts" />
+                <data android:pathPattern=".*\\.kt" />
+                <data android:pathPattern=".*\\.java" />
+                <data android:pathPattern=".*\\.c" />
+                <data android:pathPattern=".*\\.cpp" />
+                <data android:pathPattern=".*\\.h" />
+                <data android:pathPattern=".*\\.hpp" />
+                <data android:pathPattern=".*\\.css" />
+                <data android:pathPattern=".*\\.numbers" />
+                <data android:pathPattern=".*\\.pages" />
+                <data android:pathPattern=".*\\.key" />
+                <data android:pathPattern=".*\\.epub" />
+                <data android:pathPattern=".*\\.mobi" />
+                <data android:pathPattern=".*\\.azw" />
+                <data android:pathPattern=".*\\.azw3" />
+                <data android:pathPattern=".*\\.prc" />
+                <data android:pathPattern=".*\\.wpd" />
+                <data android:pathPattern=".*\\.wp" />
+                <data android:pathPattern=".*\\.wp5" />
+                <data android:pathPattern=".*\\.wp6" />
             </intent-filter>
         </activity>
 

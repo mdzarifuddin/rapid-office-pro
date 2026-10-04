@@ -108,6 +108,17 @@
         <item name="android:letterSpacing">0.04</item>
     </style>
 
+    <!--
+      The settings toolbar sits on the home screen's coloured header, so title and back arrow are
+      white in both system themes. The tint is explicit: Widget.Material3.Toolbar sets no
+      navigationIconTint, and the arrow vector is no longer tinted by itself.
+    -->
+    <style name="SettingsToolbar" parent="Widget.Material3.Toolbar">
+        <item name="titleTextColor">#FFFFFFFF</item>
+        <item name="navigationIconTint">#FFFFFFFF</item>
+        <item name="titleTextAppearance">@style/TextAppearance.Material3.TitleLarge</item>
+    </style>
+
     <style name="SettingsHeading" parent="TextAppearance.Material3.LabelLarge">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>

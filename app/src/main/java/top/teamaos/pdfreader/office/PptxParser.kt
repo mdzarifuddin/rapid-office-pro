@@ -32,11 +32,13 @@ object PptxParser {
             val slideParts = readSlideOrder(open, presentationPart, relationships)
             if (slideParts.isEmpty()) return@use null
 
+            // Shared by every slide, so a background or logo repeated on all of them is read once.
+            val pictures = OoxmlPackage.Pictures(open)
             val sections = slideParts.mapIndexedNotNull { index, part ->
                 val data = open.bytes(part) ?: return@mapIndexedNotNull null
                 val slideRelationships = open.relationships(part)
                 val layout = layoutPlaceholders(open, slideRelationships)
-                val reader = SlideReader(open, slideRelationships, layout, size.first, size.second)
+                val reader = SlideReader(pictures, slideRelationships, layout, size.first, size.second)
                 OoxmlPackage.parse(data) { reader.onEvent(it) }
                 reader.finish()
                 Section.Slide(
@@ -69,10 +71,16 @@ object PptxParser {
                 if (parser.eventType == XmlPullParser.START_TAG &&
                     OoxmlPackage.localName(parser.name) == "sldSz"
                 ) {
-                    OoxmlPackage.attr(parser, "cx")?.toFloatOrNull()
-                        ?.let { width = it / OoxmlPackage.EMU_PER_POINT }
-                    OoxmlPackage.attr(parser, "cy")?.toFloatOrNull()
-                        ?.let { height = it / OoxmlPackage.EMU_PER_POINT }
+                    // Zero, negative or NaN sizes are dropped: the slide is the page, and a page
+                    // with no size cannot be scaled to fit the screen.
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "cx"))
+                        ?.div(OoxmlPackage.EMU_PER_POINT)
+                        ?.takeIf { it > 0f && it <= MAX_SLIDE_PT }
+                        ?.let { width = it }
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "cy"))
+                        ?.div(OoxmlPackage.EMU_PER_POINT)
+                        ?.takeIf { it > 0f && it <= MAX_SLIDE_PT }
+                        ?.let { height = it }
                 }
             }
         }
@@ -172,7 +180,7 @@ object PptxParser {
      * every deck that is not built out of deeply nested groups.
      */
     private class SlideReader(
-        private val pack: OoxmlPackage,
+        private val pictures: OoxmlPackage.Pictures,
         private val relationships: Map<String, String>,
         private val layout: Map<String, FloatArray>,
         private val slideWidthPt: Float,
@@ -256,14 +264,17 @@ object PptxParser {
                 "p" -> if (inTextBody) beginParagraph()
                 "pPr" -> if (inTextBody) {
                     paragraphAlign = alignOf(OoxmlPackage.attr(parser, "algn"))
-                    paragraphLevel = OoxmlPackage.attr(parser, "lvl")?.toIntOrNull() ?: 0
+                    paragraphLevel = OoxmlPackage.attr(parser, "lvl")?.toIntOrNull()?.coerceIn(0, 8) ?: 0
                 }
                 "buChar", "buAutoNum" -> bulleted = true
                 "buNone" -> bulleted = false
                 "r" -> if (inTextBody) beginRun()
                 "rPr", "defRPr", "endParaRPr" -> {
                     inRunProperties = true
-                    OoxmlPackage.attr(parser, "sz")?.toFloatOrNull()?.let { runSize = it / 100f }
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "sz"))
+                        ?.div(100f)
+                        ?.takeIf { it > 0f && it < 4000f }
+                        ?.let { runSize = it }
                     runBold = OoxmlPackage.attr(parser, "b") == "1"
                     runItalic = OoxmlPackage.attr(parser, "i") == "1"
                     runUnderline = OoxmlPackage.attr(parser, "u").let { it != null && it != "none" }
@@ -367,7 +378,7 @@ object PptxParser {
             val id = pictureId
             if (inShape && id != null) {
                 val target = relationships[id]
-                val data = target?.let { pack.bytes(it) }
+                val data = target?.let { pictures.bytes(it) }
                 if (data != null) {
                     val box = resolveBox()
                     items += SlideItem.Picture(box[0], box[1], box[2], box[3], data)
@@ -384,7 +395,10 @@ object PptxParser {
             val y = offsetY
             val width = boxWidth
             val height = boxHeight
-            if (x != null && y != null && width != null && height != null && width > 0 && height > 0) {
+            if (x != null && y != null && width != null && height != null &&
+                x.isFinite() && y.isFinite() && width.isFinite() && height.isFinite() &&
+                width > 0 && height > 0
+            ) {
                 return floatArrayOf(x, y, width, height)
             }
             placeholderType?.let { type ->
@@ -432,4 +446,7 @@ object PptxParser {
     private const val DEFAULT_WIDTH_PT = 720f
     private const val DEFAULT_HEIGHT_PT = 540f
     private const val LEVEL_INDENT_PT = 22f
+
+    /** Well past PowerPoint's own 56-inch limit; beyond it the file is broken. */
+    private const val MAX_SLIDE_PT = 10000f
 }

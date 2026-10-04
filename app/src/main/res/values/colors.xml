@@ -43,4 +43,5 @@
     <color name="reader_backdrop_night">#FF000000</color>
     <color name="chrome_scrim">#F21E2126</color>
     <color name="chip_background">#E62C3038</color>
+    <color name="type_book">#FF8E5BD0</color>
 </resources>

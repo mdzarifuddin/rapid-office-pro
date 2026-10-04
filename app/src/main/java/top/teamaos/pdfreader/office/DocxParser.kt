@@ -27,7 +27,7 @@ object DocxParser {
             val styles = readStyles(open)
             val numbering = readNumbering(open)
             val relationships = open.relationships(documentPart)
-            val reader = BodyReader(open, styles, numbering, relationships)
+            val reader = BodyReader(OoxmlPackage.Pictures(open), styles, numbering, relationships)
             OoxmlPackage.parse(body) { reader.onEvent(it) }
             reader.finish()
 
@@ -152,7 +152,8 @@ object DocxParser {
                     "num" -> numId = OoxmlPackage.attr(parser, "numId")
                     "abstractNumId" -> {
                         val target = OoxmlPackage.attr(parser, "val")
-                        if (numId != null && target != null) numToAbstract[numId!!] = target
+                        val num = numId
+                        if (num != null && target != null) numToAbstract[num] = target
                     }
                     "lvl" -> level = OoxmlPackage.attr(parser, "ilvl")?.toIntOrNull() ?: 0
                     "numFmt" -> {
@@ -181,7 +182,7 @@ object DocxParser {
      * paragraphs, and nothing else nests at all.
      */
     private class BodyReader(
-        private val pack: OoxmlPackage,
+        private val pictures: OoxmlPackage.Pictures,
         private val styles: Map<String, NamedStyle>,
         private val numbering: Map<String, Map<Int, String>>,
         private val relationships: Map<String, String>,
@@ -248,25 +249,28 @@ object DocxParser {
                 "p" -> beginParagraph()
                 "pStyle" -> styleId = OoxmlPackage.attr(parser, "val")
                 "jc" -> align = alignOf(OoxmlPackage.attr(parser, "val"))
+                // Measurements go through OoxmlPackage.finite: "NaN" parses as a float, and one NaN
+                // in a spacing makes every position after it NaN, which draws nothing at all.
                 "ind" -> {
-                    OoxmlPackage.attr(parser, "left")?.toFloatOrNull()
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "left"))
                         ?.let { indentPt = max(0f, it / OoxmlPackage.TWIPS_PER_POINT) }
-                    OoxmlPackage.attr(parser, "start")?.toFloatOrNull()
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "start"))
                         ?.let { indentPt = max(0f, it / OoxmlPackage.TWIPS_PER_POINT) }
                 }
                 "spacing" -> {
-                    OoxmlPackage.attr(parser, "before")?.toFloatOrNull()
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "before"))
                         ?.let { spaceBefore = it / OoxmlPackage.TWIPS_PER_POINT }
-                    OoxmlPackage.attr(parser, "after")?.toFloatOrNull()
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "after"))
                         ?.let { spaceAfter = it / OoxmlPackage.TWIPS_PER_POINT }
-                    OoxmlPackage.attr(parser, "line")?.toFloatOrNull()?.let {
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "line"))?.let {
                         // Word's line spacing is in 240ths of a line when the rule is "auto".
                         val rule = OoxmlPackage.attr(parser, "lineRule")
                         if (rule == null || rule == "auto") lineSpacing = (it / 240f).coerceIn(0.6f, 3f)
                     }
                 }
                 "numPr" -> numId = null
-                "ilvl" -> listLevel = OoxmlPackage.attr(parser, "val")?.toIntOrNull() ?: 0
+                "ilvl" -> listLevel =
+                    OoxmlPackage.attr(parser, "val")?.toIntOrNull()?.coerceIn(0, MAX_LIST_LEVEL) ?: 0
                 "numId" -> numId = OoxmlPackage.attr(parser, "val")
 
                 "r" -> beginRun()
@@ -326,7 +330,8 @@ object DocxParser {
                     cellBackground = 0
                 }
                 "gridSpan" -> if (inTable == 1) {
-                    cellSpan = OoxmlPackage.attr(parser, "val")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                    // Word allows 63 columns; a span of millions would be laid out as millions.
+                    cellSpan = OoxmlPackage.attr(parser, "val")?.toIntOrNull()?.coerceIn(1, MAX_SPAN) ?: 1
                 }
                 "shd" -> {
                     val fill = OoxmlPackage.attr(parser, "fill")
@@ -337,9 +342,9 @@ object DocxParser {
 
                 "drawing", "pict" -> Unit
                 "extent" -> {
-                    pendingImageWidth = OoxmlPackage.attr(parser, "cx")?.toFloatOrNull()
+                    pendingImageWidth = OoxmlPackage.finite(OoxmlPackage.attr(parser, "cx"))
                         ?.div(OoxmlPackage.EMU_PER_POINT)
-                    pendingImageHeight = OoxmlPackage.attr(parser, "cy")?.toFloatOrNull()
+                    pendingImageHeight = OoxmlPackage.finite(OoxmlPackage.attr(parser, "cy"))
                         ?.div(OoxmlPackage.EMU_PER_POINT)
                 }
                 "blip" -> {
@@ -347,20 +352,26 @@ object DocxParser {
                     pendingImageId = id
                 }
 
+                // A page of zero, negative or infinite size cannot be laid out or scaled to the
+                // screen, so such a size is ignored and the Letter default kept.
                 "pgSz" -> {
-                    OoxmlPackage.attr(parser, "w")?.toFloatOrNull()
-                        ?.let { pageWidthPt = it / OoxmlPackage.TWIPS_PER_POINT }
-                    OoxmlPackage.attr(parser, "h")?.toFloatOrNull()
-                        ?.let { pageHeightPt = it / OoxmlPackage.TWIPS_PER_POINT }
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "w"))
+                        ?.div(OoxmlPackage.TWIPS_PER_POINT)
+                        ?.takeIf { it > 0f && it <= MAX_PAGE_PT }
+                        ?.let { pageWidthPt = it }
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "h"))
+                        ?.div(OoxmlPackage.TWIPS_PER_POINT)
+                        ?.takeIf { it > 0f && it <= MAX_PAGE_PT }
+                        ?.let { pageHeightPt = it }
                 }
                 "pgMar" -> {
-                    OoxmlPackage.attr(parser, "left")?.toFloatOrNull()
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "left"))
                         ?.let { marginLeftPt = it / OoxmlPackage.TWIPS_PER_POINT }
-                    OoxmlPackage.attr(parser, "right")?.toFloatOrNull()
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "right"))
                         ?.let { marginRightPt = it / OoxmlPackage.TWIPS_PER_POINT }
-                    OoxmlPackage.attr(parser, "top")?.toFloatOrNull()
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "top"))
                         ?.let { marginTopPt = it / OoxmlPackage.TWIPS_PER_POINT }
-                    OoxmlPackage.attr(parser, "bottom")?.toFloatOrNull()
+                    OoxmlPackage.finite(OoxmlPackage.attr(parser, "bottom"))
                         ?.let { marginBottomPt = it / OoxmlPackage.TWIPS_PER_POINT }
                 }
             }
@@ -557,7 +568,7 @@ object DocxParser {
             pendingImageHeight = null
             if (id == null) return
             val target = relationships[id] ?: return
-            val data = pack.bytes(target) ?: return
+            val data = pictures.bytes(target) ?: return
             val block = Block.Picture(
                 data,
                 width ?: DEFAULT_IMAGE_PT,
@@ -605,4 +616,9 @@ object DocxParser {
     private const val DEFAULT_SPACE_AFTER_PT = 6f
     private const val DEFAULT_IMAGE_PT = 144f
     private const val MAX_STYLE_DEPTH = 8
+    private const val MAX_SPAN = 64
+    private const val MAX_LIST_LEVEL = 8
+
+    /** 200 inches; Word's own limit is 22, so anything past this is a broken file. */
+    private const val MAX_PAGE_PT = 14400f
 }

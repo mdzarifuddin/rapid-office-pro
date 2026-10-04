@@ -18,7 +18,7 @@ import android.widget.LinearLayout
 object BarSizing {
 
     private const val PORTRAIT_BUTTONS = 5
-    private const val PEEK_DP = 18
+    private const val PEEK_DP = 30
 
     fun attach(scroll: HorizontalScrollView, row: LinearLayout) {
         row.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit(scroll, row) }

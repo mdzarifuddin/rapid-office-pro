@@ -54,6 +54,9 @@
     <string name="page_of">%1$d / %2$d</string>
     <string name="percent_read">%1$d%%</string>
     <string name="pages_count">%1$d pages</string>
+    <string name="action_slideshow">Slide show</string>
+    <string name="slideshow_hint">Tap or swipe for the next slide · Back to finish</string>
+    <string name="tab_page_of">Page %1$d of %2$d</string>
 
     <string name="loading">Opening…</string>
     <string name="error_open_failed">Could not open this document.</string>
@@ -229,4 +232,6 @@
     <string name="nothing_to_undo">Nothing to undo</string>
     <string name="nothing_to_redo">Nothing to redo</string>
     <string name="draw_hint">One finger draws, two fingers move the page</string>
+    <string name="office_unsupported">%1$s is a %2$s file, which this app can\'t display. Use Open with to view it in another app.</string>
+    <string name="office_drm_protected">%1$s is a %2$s locked with DRM by the store it came from, so no app other than that store\'s own reader can open it.</string>
 </resources>

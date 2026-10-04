@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Log
 import android.view.View
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -21,6 +22,7 @@ import androidx.recyclerview.widget.ConcatAdapter
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.tabs.TabLayout
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -31,6 +33,7 @@ import top.teamaos.pdfreader.data.DocumentRecord
 import top.teamaos.pdfreader.data.ReaderDatabase
 import top.teamaos.pdfreader.databinding.ActivityMainBinding
 import top.teamaos.pdfreader.office.OfficeFormats
+import java.util.concurrent.ConcurrentHashMap
 
 /** Home screen: recent and favourite documents, with a search filter and a picker. */
 class MainActivity : AppCompatActivity() {
@@ -61,6 +64,22 @@ class MainActivity : AppCompatActivity() {
     private var browseDir: java.io.File? = null
     private var folderJob: Job? = null
     private var folderLoading = false
+
+    /**
+     * The Phone tab's storages and the trail shown above the folder, both worked out off the main
+     * thread. Asking for storage volumes, canonical paths and free space touches the disk, and on a
+     * slow or just-ejected memory card that blocked typing in the search box long enough to ANR.
+     * The storages are re-read after each resume, in case a card came or went while away.
+     */
+    @Volatile private var storageCache: List<FolderEntry>? = null
+    @Volatile private var rootPaths: Set<String> = emptySet()
+    private var crumb: String? = null
+
+    /**
+     * [fileKey] per URI, filled on IO as records arrive so [applyFilter], run on every keystroke,
+     * never resolves a canonical path on the main thread.
+     */
+    private val fileKeys = ConcurrentHashMap<String, String>()
 
     /** Recent and favourite together: what the search box looks through, whichever tab is open. */
     private var history: List<DocumentRecord> = emptyList()
@@ -136,9 +155,11 @@ class MainActivity : AppCompatActivity() {
     private fun clearLeftovers() {
         lifecycleScope.launch(Dispatchers.IO) {
             val cutoff = System.currentTimeMillis() - LEFTOVER_AGE_MS
-            cacheDir.listFiles()?.forEach { file ->
-                if (file.isFile && file.name.startsWith("save-") && file.lastModified() < cutoff) {
-                    file.delete()
+            runCatching {
+                cacheDir.listFiles()?.forEach { file ->
+                    if (file.isFile && file.name.startsWith("save-") && file.lastModified() < cutoff) {
+                        file.delete()
+                    }
                 }
             }
         }
@@ -162,6 +183,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         hadAccess = StorageAccess.hasAllFilesAccess(this)
+        storageCache = null
         refresh()
         Updater.resumePendingInstall(this)
         checkForUpdateDaily()
@@ -216,6 +238,7 @@ class MainActivity : AppCompatActivity() {
             val recent = database.recentDocuments()
             val favourites = database.favouriteDocuments()
             history = (recent + favourites).distinctBy { it.id }
+            rememberKeys(history)
             loaded = when (binding.tabs.selectedTabPosition) {
                 TAB_FAVOURITES -> favourites
                 TAB_RECENT -> recent
@@ -242,12 +265,12 @@ class MainActivity : AppCompatActivity() {
         isUp = true,
     )
 
-    private fun isRoot(dir: java.io.File): Boolean {
-        val path = runCatching { dir.canonicalPath }.getOrDefault(dir.absolutePath)
-        return StorageAccess.storageRoots(this).any {
-            runCatching { it.canonicalPath }.getOrDefault(it.absolutePath) == path
-        }
-    }
+    /**
+     * Answered from [rootPaths] (both spellings of each root, gathered on IO), because this runs on
+     * the main thread on Back. Folders are reached by walking down from a root, so their absolute
+     * path starts with the root's own absolute path and needs no resolving.
+     */
+    private fun isRoot(dir: java.io.File): Boolean = dir.absolutePath in rootPaths
 
     /**
      * List one folder: its subfolders first, then the documents this app can open, both by name.
@@ -258,54 +281,88 @@ class MainActivity : AppCompatActivity() {
         folderJob?.cancel()
         folderLoading = true
         applyFilter()
+        if (dir == null) crumb = getString(R.string.browse_storages)
         folderJob = lifecycleScope.launch {
             val known = history
-            val (folders, documents) = withContext(Dispatchers.IO) {
-                if (dir == null) {
-                    storageEntries() to emptyList()
-                } else {
-                    val children = dir.listFiles().orEmpty().filterNot { it.name.startsWith(".") }
-                    val folders = children.filter { it.isDirectory }
-                        .sortedBy { it.name.lowercase() }
-                        .map { folder ->
-                            val count = folder.list()?.count { !it.startsWith(".") } ?: 0
-                            FolderEntry(folder, folder.name, resources.getQuantityString(R.plurals.folder_items, count, count))
-                        }
-                    val byKey = known.associateBy { fileKey(it.uri) }
-                    val documents = children.filter { it.isFile && isOpenable(it.name) }
-                        .sortedBy { it.name.lowercase() }
-                        .map { file ->
-                            val found = FoundFile(file.name, file.absolutePath, file.length(), file.lastModified())
-                            byKey[fileKey(found.uri.toString())] ?: found.toRecord()
-                        }
-                    (listOf(upEntry(dir)) + folders) to documents
+            val listed = withContext(Dispatchers.IO) {
+                try {
+                    listFolder(dir, known)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // An unreadable or vanished folder (card pulled out) shows as empty, not a crash.
+                    Log.w(TAG, "Could not list $dir", e)
+                    null
                 }
             }
             folderLoading = false
             if (!browsing() || browseDir != dir) return@launch
+            val (folders, documents, trail) = listed
+                ?: Triple(if (dir == null) emptyList() else listOf(upEntry(dir)), emptyList<DocumentRecord>(), dir?.absolutePath)
+            crumb = trail
             folderAdapter.submitList(folders)
             loaded = documents
             applyFilter()
         }
     }
 
-    /** The top of the browser: built-in storage and any memory card, named the way the phone names them. */
+    /** The IO half of [loadFolder]: the folder's entries, its documents, and its breadcrumb. */
+    private fun listFolder(
+        dir: java.io.File?,
+        known: List<DocumentRecord>,
+    ): Triple<List<FolderEntry>, List<DocumentRecord>, String> {
+        // First, so the roots behind isRoot (via upEntry) and the breadcrumb are current.
+        storageEntries()
+        val (folders, documents) = run {
+            if (dir == null) {
+                storageEntries() to emptyList<DocumentRecord>()
+            } else {
+                val children = dir.listFiles().orEmpty().filterNot { it.name.startsWith(".") }
+                val folders = children.filter { it.isDirectory }
+                    .sortedBy { it.name.lowercase() }
+                    .map { folder ->
+                        val count = folder.list()?.count { !it.startsWith(".") } ?: 0
+                        FolderEntry(folder, folder.name, resources.getQuantityString(R.plurals.folder_items, count, count))
+                    }
+                val byKey = known.associateBy { keyOf(it.uri) }
+                val documents = children.filter { it.isFile && isOpenable(it.name) }
+                    .sortedBy { it.name.lowercase() }
+                    .map { file ->
+                        val found = FoundFile(file.name, file.absolutePath, file.length(), file.lastModified())
+                        byKey[keyOf(found.uri.toString())] ?: found.toRecord()
+                    }
+                documents.forEach { keyOf(it.uri) }
+                (listOf(upEntry(dir)) + folders) to documents
+            }
+        }
+        return Triple(folders, documents, breadcrumb(dir))
+    }
+
+    /**
+     * The top of the browser: built-in storage and any memory card, named the way the phone names
+     * them. Disk work, so IO only; cached until the next resume.
+     */
     private fun storageEntries(): List<FolderEntry> {
+        storageCache?.let { return it }
         val manager = getSystemService(android.os.storage.StorageManager::class.java)
-        return StorageAccess.storageRoots(this).mapIndexed { index, root ->
+        val roots = StorageAccess.storageRoots(this)
+        rootPaths = roots.flatMap {
+            listOf(it.absolutePath, runCatching { it.canonicalPath }.getOrDefault(it.absolutePath))
+        }.toSet()
+        return roots.mapIndexed { index, root ->
             val described = runCatching { manager?.getStorageVolume(root)?.getDescription(this) }.getOrNull()
             val name = described?.takeIf { it.isNotBlank() }
                 ?: getString(if (index == 0) R.string.storage_internal else R.string.storage_card)
             val free = runCatching { android.text.format.Formatter.formatShortFileSize(this, root.freeSpace) }
                 .getOrNull()
             FolderEntry(root, name, free?.let { getString(R.string.storage_free, it) })
-        }
+        }.also { storageCache = it }
     }
 
     private fun isOpenable(name: String): Boolean =
         name.endsWith(".pdf", ignoreCase = true) || OfficeFormats.isOffice(name)
 
-    /** Where the browser is, as a trail: "Internal storage › Download › Books". */
+    /** Where the browser is, as a trail: "Internal storage › Download › Books". IO only. */
     private fun breadcrumb(dir: java.io.File?): String {
         if (dir == null) return getString(R.string.browse_storages)
         val path = runCatching { dir.canonicalPath }.getOrDefault(dir.absolutePath)
@@ -339,8 +396,8 @@ class MainActivity : AppCompatActivity() {
         // Matched by the file they point at, not by the text of the URI: history records a file
         // as /sdcard/..., storage reports it as /storage/emulated/0/..., and the same file would
         // otherwise be listed twice.
-        val known = fromHistory.map { fileKey(it.uri) }.toHashSet()
-        val fromDevice = if (!searching) emptyList() else deviceResults.filter { fileKey(it.uri) !in known }
+        val known = fromHistory.map { cachedKey(it.uri) }.toHashSet()
+        val fromDevice = if (!searching) emptyList() else deviceResults.filter { cachedKey(it.uri) !in known }
         if (searching) {
             // PDFs first — they are what this app is mostly for — keeping read-before files ahead
             // within each kind. Then back to the top: results landing above the first visible row
@@ -356,7 +413,7 @@ class MainActivity : AppCompatActivity() {
             binding.searchStatus.text = if (!StorageAccess.hasAllFilesAccess(this)) {
                 getString(R.string.access_needed)
             } else {
-                breadcrumb(browseDir)
+                crumb ?: browseDir?.absolutePath ?: getString(R.string.browse_storages)
             }
         }
         if (searching) {
@@ -390,7 +447,22 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    /** What two URIs have to agree on to be the same document. */
+    /** [fileKey] as already worked out on IO; the raw URI for anything not seen there yet. */
+    private fun cachedKey(uri: String): String = fileKeys[uri] ?: uri
+
+    /** [fileKey], computed once per URI. Resolves paths, so IO only. */
+    private fun keyOf(uri: String): String = fileKeys.getOrPut(uri) { fileKey(uri) }
+
+    /** Works out the keys of [records] on IO, before they reach [applyFilter]. */
+    private suspend fun rememberKeys(records: List<DocumentRecord>) {
+        if (records.all { fileKeys.containsKey(it.uri) }) return
+        withContext(Dispatchers.IO) {
+            if (fileKeys.size > MAX_CACHED_KEYS) fileKeys.clear()
+            records.forEach { keyOf(it.uri) }
+        }
+    }
+
+    /** What two URIs have to agree on to be the same document. Resolves paths, so IO only. */
     private fun fileKey(uri: String): String {
         if (!uri.startsWith("file:")) return uri
         val path = Uri.parse(uri).path ?: return uri
@@ -416,9 +488,19 @@ class MainActivity : AppCompatActivity() {
         searchRunning = true
         deviceSearchJob = lifecycleScope.launch {
             delay(SEARCH_DEBOUNCE_MS)
-            val found = DeviceSearch.search(applicationContext, needle)
+            val found = try {
+                DeviceSearch.search(applicationContext, needle).map { it.toRecord() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A provider refusing the query (SecurityException) or a storage read failing just
+                // means no phone-wide results this time; the history matches still show.
+                Log.w(TAG, "Device search failed", e)
+                emptyList()
+            }
+            rememberKeys(found)
             searchRunning = false
-            deviceResults = found.map { it.toRecord() }
+            deviceResults = found
             applyFilter()
         }
     }
@@ -452,7 +534,14 @@ class MainActivity : AppCompatActivity() {
     private fun openRecord(record: DocumentRecord) {
         lifecycleScope.launch {
             val original = Uri.parse(record.uri)
-            val target = withContext(Dispatchers.IO) { locate(record, original) }
+            val target = try {
+                withContext(Dispatchers.IO) { locate(record, original) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not locate ${record.uri}", e)
+                null
+            }
             if (target == null) {
                 Toast.makeText(this@MainActivity, R.string.file_missing, Toast.LENGTH_LONG).show()
                 return@launch
@@ -487,13 +576,20 @@ class MainActivity : AppCompatActivity() {
      * really theirs — so there is exactly one place that knows which screen a format opens on.
      */
     private fun openDocument(uri: Uri) {
-        val target = if (isPdf(uri)) ReaderActivity::class.java else OfficeActivity::class.java
-        startActivity(
-            Intent(this, target).apply {
-                putExtra(ReaderActivity.EXTRA_URI, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            },
-        )
+        // isPdf may ask the provider about the file, and one that has since revoked the grant
+        // answers with a SecurityException; that is "could not open", not a crash.
+        try {
+            val target = if (isPdf(uri)) ReaderActivity::class.java else OfficeActivity::class.java
+            startActivity(
+                Intent(this, target).apply {
+                    putExtra(ReaderActivity.EXTRA_URI, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not open $uri", e)
+            Toast.makeText(this, R.string.error_open_failed, Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun isPdf(uri: Uri): Boolean {
@@ -505,8 +601,10 @@ class MainActivity : AppCompatActivity() {
         val type = runCatching { contentResolver.getType(uri) }.getOrNull().orEmpty()
         if (type == "application/pdf") return true
         if (type.isNotEmpty() && OfficeFormats.isOfficeMimeType(type)) return false
+        // Anything still unknown goes to the office viewer, which looks at the bytes themselves and
+        // hands a real PDF back to the reader; the PDF reader can do nothing with a Word file.
         val displayName = OfficeFormats.displayNameOf(this, uri)
-        return !OfficeFormats.isOffice(displayName)
+        return displayName.endsWith(".pdf", ignoreCase = true)
     }
 
     private fun toggleFavourite(record: DocumentRecord) {
@@ -526,7 +624,8 @@ class MainActivity : AppCompatActivity() {
                     openedAt = 0L,
                 )
             }
-            database.setFavourite(id, !record.isFavorite)
+            // -1 is the database's fail-safe answer: nothing was written, so there is nothing to star.
+            if (id > 0) database.setFavourite(id, !record.isFavorite)
             refresh()
         }
     }
@@ -559,6 +658,8 @@ class MainActivity : AppCompatActivity() {
         const val MIN_DEVICE_QUERY = 2
         const val SEARCH_DEBOUNCE_MS = 260L
         const val LIST_BOTTOM_PADDING_DP = 96
+        const val MAX_CACHED_KEYS = 5000
+        const val TAG = "MainActivity"
         /**
          * What the Open button offers.
          *

@@ -129,17 +129,6 @@ sealed class SlideItem {
     ) : SlideItem()
 }
 
-/** A spreadsheet cell, already turned into the text a reader should see. */
-data class GridCell(
-    val text: String,
-    val bold: Boolean = false,
-    val align: Align = Align.LEFT,
-    val background: Int = 0,
-    val colour: Int = 0xFF000000.toInt(),
-    val columnSpan: Int = 1,
-    val rowSpan: Int = 1,
-)
-
 /**
  * A part of a document that is laid out as one unit.
  *
@@ -160,11 +149,11 @@ sealed class Section {
         val marginBottomPt: Float = 72f,
     ) : Section()
 
-    data class Grid(
+    /** A sheet. Its cells are a [GridData], which is compact enough for a million rows. */
+    class Grid(
         override val title: String,
-        val rows: List<List<GridCell>>,
+        val grid: GridData,
         val columnWidthsPt: List<Float>,
-        val frozenRows: Int = 0,
     ) : Section()
 
     data class Slide(

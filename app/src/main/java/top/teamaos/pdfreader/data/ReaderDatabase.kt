@@ -4,7 +4,10 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteException
 import android.database.sqlite.SQLiteOpenHelper
+import android.util.Log
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -143,6 +146,37 @@ class ReaderDatabase private constructor(context: Context) :
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_marks_document ON marks(document_id, page)")
     }
 
+    /**
+     * A database from a newer build, restored onto an older one, would otherwise make every query
+     * throw. History is rebuilt the same way an old schema is; marks are kept where they can be.
+     */
+    override fun onDowngrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        db.execSQL("DROP TABLE IF EXISTS bookmarks")
+        db.execSQL("DROP TABLE IF EXISTS documents")
+        onCreate(db)
+    }
+
+    /**
+     * Run a database call on the IO thread, answering [fallback] if the database cannot do it.
+     *
+     * A full disk, an I/O error or a damaged file must cost a remembered page, never the app: these
+     * calls run from onResume and while documents open, so one uncaught failure would crash the app
+     * on every launch until the phone had space again.
+     */
+    private suspend fun <T> io(fallback: T, block: suspend CoroutineScope.() -> T): T =
+        withContext(Dispatchers.IO) {
+            try {
+                block()
+            } catch (e: SQLiteException) {
+                Log.w(TAG, "database call failed", e)
+                fallback
+            } catch (e: IllegalStateException) {
+                // A cursor or connection closed underneath us.
+                Log.w(TAG, "database call failed", e)
+                fallback
+            }
+        }
+
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // Reading history and bookmarks are cheap to lose and expensive to migrate wrongly, so
         // they are rebuilt. Marks are not: they are the reader's own work, so the table is only
@@ -167,7 +201,7 @@ class ReaderDatabase private constructor(context: Context) :
         modifiedAt: Long,
         pageCount: Int,
         openedAt: Long,
-    ): Long = withContext(Dispatchers.IO) {
+    ): Long = io(-1L) {
         val db = writableDatabase
         db.beginTransaction()
         try {
@@ -179,6 +213,18 @@ class ReaderDatabase private constructor(context: Context) :
                 put("modified_at", modifiedAt)
                 put("page_count", pageCount)
                 put("last_opened_at", openedAt)
+            }
+            // Page sizes cached for an earlier version of this file would lay the new one out
+            // wrongly, so any change in size or modification time throws them away.
+            db.query(
+                "documents", arrayOf("size_bytes", "modified_at"), "uri = ?", arrayOf(uri),
+                null, null, null, "1",
+            ).use { cursor ->
+                if (cursor.moveToFirst() &&
+                    (cursor.getLong(0) != sizeBytes || cursor.getLong(1) != modifiedAt)
+                ) {
+                    values.putNull("page_sizes")
+                }
             }
             val updated = db.update("documents", values, "uri = ?", arrayOf(uri))
             val id = if (updated > 0) {
@@ -193,21 +239,21 @@ class ReaderDatabase private constructor(context: Context) :
         }
     }
 
-    suspend fun findDocument(uri: String): DocumentRecord? = withContext(Dispatchers.IO) {
+    suspend fun findDocument(uri: String): DocumentRecord? = io(null) {
         readableDatabase.query(
             "documents", null, "uri = ?", arrayOf(uri), null, null, null, "1",
         ).use { cursor -> if (cursor.moveToFirst()) cursor.toDocument() else null }
     }
 
     /** Most recently opened first, capped so the list screen never has to page through history. */
-    suspend fun recentDocuments(limit: Int = 200): List<DocumentRecord> = withContext(Dispatchers.IO) {
+    suspend fun recentDocuments(limit: Int = 200): List<DocumentRecord> = io(emptyList()) {
         readableDatabase.query(
             "documents", null, "last_opened_at > 0", null, null, null,
             "last_opened_at DESC", limit.toString(),
         ).use { it.toDocumentList() }
     }
 
-    suspend fun favouriteDocuments(): List<DocumentRecord> = withContext(Dispatchers.IO) {
+    suspend fun favouriteDocuments(): List<DocumentRecord> = io(emptyList()) {
         readableDatabase.query(
             "documents", null, "is_favorite = 1", null, null, null, "last_opened_at DESC",
         ).use { it.toDocumentList() }
@@ -221,7 +267,7 @@ class ReaderDatabase private constructor(context: Context) :
         zoom: Float,
         viewMode: Int,
         colorMode: Int,
-    ) = withContext(Dispatchers.IO) {
+    ) = io(Unit) {
         val values = ContentValues().apply {
             put("last_page", page)
             put("last_fraction_x", fractionX)
@@ -234,13 +280,13 @@ class ReaderDatabase private constructor(context: Context) :
         Unit
     }
 
-    suspend fun setFavourite(documentId: Long, favourite: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun setFavourite(documentId: Long, favourite: Boolean) = io(Unit) {
         val values = ContentValues().apply { put("is_favorite", if (favourite) 1 else 0) }
         writableDatabase.update("documents", values, "id = ?", arrayOf(documentId.toString()))
         Unit
     }
 
-    suspend fun removeDocument(documentId: Long) = withContext(Dispatchers.IO) {
+    suspend fun removeDocument(documentId: Long) = io(Unit) {
         writableDatabase.delete("documents", "id = ?", arrayOf(documentId.toString()))
         Unit
     }
@@ -249,7 +295,7 @@ class ReaderDatabase private constructor(context: Context) :
      * Point a history entry at where its file really is, keeping its reading position, bookmarks
      * and marks. If that file already has its own entry, the stale one is dropped instead.
      */
-    suspend fun relocateDocument(documentId: Long, newUri: String) = withContext(Dispatchers.IO) {
+    suspend fun relocateDocument(documentId: Long, newUri: String) = io(Unit) {
         val db = writableDatabase
         db.beginTransaction()
         try {
@@ -265,7 +311,7 @@ class ReaderDatabase private constructor(context: Context) :
         }
     }
 
-    suspend fun clearHistory() = withContext(Dispatchers.IO) {
+    suspend fun clearHistory() = io(Unit) {
         writableDatabase.delete("documents", "is_favorite = 0", null)
         Unit
     }
@@ -274,7 +320,7 @@ class ReaderDatabase private constructor(context: Context) :
 
     /** Cached page sizes, so reopening a long document skips measuring entirely. */
     suspend fun pageSizes(documentId: Long, expectedPageCount: Int): ByteArray? =
-        withContext(Dispatchers.IO) {
+        io(null) {
             readableDatabase.query(
                 "documents", arrayOf("page_sizes", "page_count"),
                 "id = ?", arrayOf(documentId.toString()), null, null, null, "1",
@@ -285,15 +331,21 @@ class ReaderDatabase private constructor(context: Context) :
             }
         }
 
-    suspend fun savePageSizes(documentId: Long, blob: ByteArray) = withContext(Dispatchers.IO) {
+    suspend fun savePageSizes(documentId: Long, blob: ByteArray) = io(Unit) {
         val values = ContentValues().apply { put("page_sizes", blob) }
+        writableDatabase.update("documents", values, "id = ?", arrayOf(documentId.toString()))
+        Unit
+    }
+
+    suspend fun clearPageSizes(documentId: Long) = io(Unit) {
+        val values = ContentValues().apply { putNull("page_sizes") }
         writableDatabase.update("documents", values, "id = ?", arrayOf(documentId.toString()))
         Unit
     }
 
     // ---------------------------------------------------------------- bookmarks
 
-    suspend fun bookmarks(documentId: Long): List<BookmarkRecord> = withContext(Dispatchers.IO) {
+    suspend fun bookmarks(documentId: Long): List<BookmarkRecord> = io(emptyList()) {
         readableDatabase.query(
             "bookmarks", null, "document_id = ?", arrayOf(documentId.toString()),
             null, null, "page ASC",
@@ -315,7 +367,7 @@ class ReaderDatabase private constructor(context: Context) :
     }
 
     suspend fun addBookmark(documentId: Long, page: Int, label: String?, createdAt: Long): Long =
-        withContext(Dispatchers.IO) {
+        io(-1L) {
             val values = ContentValues().apply {
                 put("document_id", documentId)
                 put("page", page)
@@ -325,7 +377,7 @@ class ReaderDatabase private constructor(context: Context) :
             writableDatabase.insert("bookmarks", null, values)
         }
 
-    suspend fun removeBookmark(documentId: Long, page: Int) = withContext(Dispatchers.IO) {
+    suspend fun removeBookmark(documentId: Long, page: Int) = io(Unit) {
         writableDatabase.delete(
             "bookmarks", "document_id = ? AND page = ?",
             arrayOf(documentId.toString(), page.toString()),
@@ -345,8 +397,8 @@ class ReaderDatabase private constructor(context: Context) :
     // ---------------------------------------------------------------- marks
 
     /** Every stroke on a document, page by page. */
-    suspend fun marks(documentId: Long): List<MarkRecord> = withContext(Dispatchers.IO) {
-        if (documentId <= 0) return@withContext emptyList()
+    suspend fun marks(documentId: Long): List<MarkRecord> = io(emptyList()) {
+        if (documentId <= 0) return@io emptyList()
         readableDatabase.query(
             "marks", null, "document_id = ?", arrayOf(documentId.toString()),
             null, null, "page ASC, id ASC", MAX_MARKS.toString(),
@@ -374,8 +426,8 @@ class ReaderDatabase private constructor(context: Context) :
         colour: Int,
         widthPts: Float,
         points: ByteArray,
-    ): Long = withContext(Dispatchers.IO) {
-        if (documentId <= 0) return@withContext -1L
+    ): Long = io(-1L) {
+        if (documentId <= 0) return@io -1L
         val values = ContentValues().apply {
             put("document_id", documentId)
             put("page", page)
@@ -395,8 +447,8 @@ class ReaderDatabase private constructor(context: Context) :
         colour: Int,
         widthPts: Float,
         points: ByteArray,
-    ) = withContext(Dispatchers.IO) {
-        if (documentId <= 0 || id <= 0) return@withContext
+    ) = io(Unit) {
+        if (documentId <= 0 || id <= 0) return@io
         val values = ContentValues().apply {
             put("id", id)
             put("document_id", documentId)
@@ -412,20 +464,20 @@ class ReaderDatabase private constructor(context: Context) :
         Unit
     }
 
-    suspend fun removeMarks(ids: Collection<Long>) = withContext(Dispatchers.IO) {
-        if (ids.isEmpty()) return@withContext
+    suspend fun removeMarks(ids: Collection<Long>) = io(Unit) {
+        if (ids.isEmpty()) return@io
         val places = ids.joinToString(",") { "?" }
         writableDatabase.delete("marks", "id IN ($places)", ids.map { it.toString() }.toTypedArray())
         Unit
     }
 
-    suspend fun clearMarks(documentId: Long) = withContext(Dispatchers.IO) {
-        if (documentId <= 0) return@withContext
+    suspend fun clearMarks(documentId: Long) = io(Unit) {
+        if (documentId <= 0) return@io
         writableDatabase.delete("marks", "document_id = ?", arrayOf(documentId.toString()))
         Unit
     }
 
-    suspend fun prune() = withContext(Dispatchers.IO) {
+    suspend fun prune() = io(Unit) {
         val db = writableDatabase
         db.beginTransaction()
         try {
@@ -496,6 +548,7 @@ class ReaderDatabase private constructor(context: Context) :
         private const val MAX_MARKS = 40000
 
         private const val DATABASE_VERSION = 2
+        private const val TAG = "RapidPDF"
 
         /** Reading history beyond this many documents is dropped, oldest first. */
         private const val MAX_HISTORY_ROWS = "400"
@@ -514,7 +567,10 @@ class ReaderDatabase private constructor(context: Context) :
          * being destroyed — which is why the last page read was so often not there on the way back
          * in. Process-scoped, never cancelled, and only ever used for small writes.
          */
-        private val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        private val writeScope = CoroutineScope(
+            SupervisorJob() + Dispatchers.IO +
+                CoroutineExceptionHandler { _, error -> Log.w(TAG, "background write failed", error) },
+        )
 
         /** Run a small write that must not be tied to any screen's lifetime. */
         fun writeInBackground(block: suspend ReaderDatabase.() -> Unit) {

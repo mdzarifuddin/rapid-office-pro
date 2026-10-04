@@ -20,13 +20,19 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.marginBottom
 import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import top.teamaos.pdfreader.R
 import top.teamaos.pdfreader.data.ReaderDatabase
@@ -38,6 +44,7 @@ import top.teamaos.pdfreader.office.OfficeFormats
 import top.teamaos.pdfreader.office.OfficeLayout
 import top.teamaos.pdfreader.view.ColorMode
 import kotlin.math.log2
+import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
@@ -62,6 +69,7 @@ class OfficeActivity : AppCompatActivity() {
 
     private val matches = mutableListOf<Pair<Int, RectF>>()
     private var matchIndex = -1
+    private var searchJob: Job? = null
     private var selectedText: String? = null
 
     private var adjustingZoomSlider = false
@@ -79,6 +87,16 @@ class OfficeActivity : AppCompatActivity() {
 
     private val hideChipRunnable = Runnable { binding.pageChip.visibility = View.GONE }
     private val hideZoomSliderRunnable = Runnable { binding.zoomSliderBar.visibility = View.GONE }
+
+    /**
+     * singleTop: a second document opened while this one is on top replaces it instead of stacking
+     * another viewer above, each with its whole parsed document in memory.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        recreate()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -98,19 +116,19 @@ class OfficeActivity : AppCompatActivity() {
 
         // Both keys: the file list hands documents to whichever reader they belong to using one
         // extra, and this screen has its own name for it as well.
+        // A file shared to the app arrives as a stream, not as data; a bare piece of shared text
+        // has neither, and is shown as a text document of its own rather than as an error.
         val target = intent.data
             ?: intent.getParcelableExtra<Uri>(ReaderActivity.EXTRA_URI)
             ?: intent.getParcelableExtra<Uri>(EXTRA_URI)
+            ?: intent.takeIf { it.action == Intent.ACTION_SEND }?.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            ?: sharedTextAsFile()
         if (target == null) {
             showError(getString(R.string.error_open_failed))
             return
         }
         takePersistablePermission(target)
-        // Remembered by its real path where it has one, so the history entry keeps opening after
-        // the app that sent it has taken its read grant back.
-        val located = StorageAccess.resolveFile(this, target)?.let(Uri::fromFile) ?: target
-        uri = located
-        open(located)
+        open(target)
     }
 
     private fun applyWindowInsets() {
@@ -243,6 +261,7 @@ class OfficeActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this) {
             when {
+                binding.officeView.isSlideShow -> stopSlideShow()
                 binding.textActionBar.visibility == View.VISIBLE -> clearSelection()
                 searchOpen -> closeSearch()
                 else -> finish()
@@ -264,15 +283,78 @@ class OfficeActivity : AppCompatActivity() {
         binding.errorView.visibility = View.GONE
 
         lifecycleScope.launch {
-            val name = withContext(Dispatchers.IO) { OfficeFormats.displayNameOf(this@OfficeActivity, target) }
-            val result = withContext(Dispatchers.IO) {
-                val file = OfficeFormats.localCopy(this@OfficeActivity, target) ?: return@withContext null
-                val parsed = OfficeFormats.read(file, name) ?: return@withContext null
-                Triple(parsed, OfficeLayout.paginate(parsed), file)
+            // Remembered by its real path where it has one, so the history entry keeps opening
+            // after the app that sent it has taken its read grant back. Resolving it walks the
+            // storage roots, which on a slow SD card is long enough to freeze the screen, so it
+            // is done with the rest of the file work rather than on the main thread.
+            val located = withContext(Dispatchers.IO) {
+                runCatching { StorageAccess.resolveFile(this@OfficeActivity, target) }.getOrNull()
+            }?.let(Uri::fromFile) ?: target
+            uri = located
+            val name = withContext(Dispatchers.IO) { OfficeFormats.displayNameOf(this@OfficeActivity, located) }
+            var isPdf = false
+            var unsupported: OfficeFormats.Opened.Unsupported? = null
+            // Interruptible, so backing out of a huge file stops the parser and the layout where they
+            // are (both check for it in their loops) instead of finishing for nobody.
+            val result = try {
+                runInterruptible(Dispatchers.IO) {
+                    // Anything going wrong in a parser or in measuring — including running out of
+                    // memory on a huge file — is this file not opening, not the app closing.
+                    try {
+                        val file = OfficeFormats.localCopy(this@OfficeActivity, located)
+                            ?: return@runInterruptible null
+                        val started = android.os.SystemClock.elapsedRealtime()
+                        when (val opened = OfficeFormats.open(file, name)) {
+                            is OfficeFormats.Opened.Document -> {
+                                val parsed = android.os.SystemClock.elapsedRealtime()
+                                val laidOut = OfficeLayout.paginate(opened.document)
+                                // How long opening took, by stage: the first thing to look at when
+                                // a big file feels slow.
+                                android.util.Log.i(
+                                    TAG,
+                                    "Opened $name: read ${parsed - started} ms, laid out " +
+                                        "${android.os.SystemClock.elapsedRealtime() - parsed} ms, " +
+                                        "${laidOut.pages.size} pages",
+                                )
+                                Triple(opened.document, laidOut, file)
+                            }
+                            OfficeFormats.Opened.Pdf -> {
+                                isPdf = true
+                                null
+                            }
+                            is OfficeFormats.Opened.Unsupported -> {
+                                unsupported = opened
+                                null
+                            }
+                            OfficeFormats.Opened.Unreadable -> null
+                        }
+                    } catch (interrupted: InterruptedException) {
+                        throw interrupted
+                    } catch (failure: Throwable) {
+                        null
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (interrupted: InterruptedException) {
+                return@launch
+            }
+            if (isPdf) {
+                openInPdfReader(located)
+                return@launch
             }
             if (result == null) {
                 binding.loadingOverlay.visibility = View.GONE
-                showError(getString(R.string.office_cannot_open, name))
+                showError(
+                    unsupported?.let {
+                        if (it.drm) {
+                            getString(R.string.office_drm_protected, name, it.format)
+                        } else {
+                            getString(R.string.office_unsupported, name, it.format)
+                        }
+                    }
+                        ?: getString(R.string.office_cannot_open, name),
+                )
                 return@launch
             }
             val parsed = result.first
@@ -280,9 +362,16 @@ class OfficeActivity : AppCompatActivity() {
             document = parsed
             title = parsed.displayName
             binding.officeView.show(laidOut)
+            invalidateOptionsMenu()
+            // A wide sheet can be zoomed in further than a page; let the slider reach that far.
+            binding.zoomSlider.valueTo = max(ZOOM_SLIDER_MAX_LOG2, log2(binding.officeView.maxZoomLevel))
+            updateZoomLabel()
             binding.fastScroll.isUsable = laidOut.pages.size > 1
 
-            parsed.limitationNote?.let { note ->
+            listOfNotNull(parsed.limitationNote, laidOut.notice)
+                .joinToString("\n")
+                .ifEmpty { null }
+                ?.let { note ->
                 binding.limitationNote.text = note
                 binding.limitationNote.visibility = View.VISIBLE
                 binding.limitationNote.post { applyHeaderInset() }
@@ -373,6 +462,40 @@ class OfficeActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         savePosition()
+    }
+
+    /**
+     * The file turned out to be a PDF — sent as a generic attachment, or misnamed — so it goes to
+     * the PDF reader, and this screen steps out of the way.
+     *
+     * A content URI travels as the intent's data so the read grant goes with it. A file URI goes
+     * as an extra: one in the data trips Android's file-URI exposure check even between two
+     * screens of the same app.
+     */
+    private fun openInPdfReader(target: Uri) {
+        runCatching {
+            startActivity(
+                Intent(this, ReaderActivity::class.java).apply {
+                    if (target.scheme == "content") data = target
+                    putExtra(ReaderActivity.EXTRA_URI, target)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                },
+            )
+            finish()
+        }.onFailure { showError(getString(R.string.error_open_failed)) }
+    }
+
+    /** Text shared on its own, written to a file so it opens like any other text document. */
+    private fun sharedTextAsFile(): Uri? {
+        if (intent.action != Intent.ACTION_SEND) return null
+        val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: return null
+        if (text.isBlank()) return null
+        return runCatching {
+            val directory = java.io.File(cacheDir, "shared").apply { mkdirs() }
+            val file = java.io.File(directory, "Shared text.txt")
+            file.writeText(text)
+            Uri.fromFile(file)
+        }.getOrNull()
     }
 
     private fun showError(message: String) {
@@ -688,6 +811,8 @@ class OfficeActivity : AppCompatActivity() {
     }
 
     private fun closeSearch() {
+        searchJob?.cancel()
+        searchJob = null
         matches.clear()
         matchIndex = -1
         binding.searchBar.visibility = View.GONE
@@ -706,20 +831,29 @@ class OfficeActivity : AppCompatActivity() {
     private fun runSearch(query: String) {
         val needle = query.trim()
         if (needle.isEmpty()) return
+        // A new query replaces the one still running rather than racing it to the screen.
+        searchJob?.cancel()
         matches.clear()
         matchIndex = -1
-        binding.officeView.eachParagraph { page, bounds, text ->
-            if (matches.size >= MAX_MATCHES) return@eachParagraph
-            var from = 0
-            val haystack = text.toString()
-            while (true) {
-                val at = haystack.indexOf(needle, from, ignoreCase = true)
-                if (at < 0) break
-                matches += page to bounds
-                from = at + needle.length
-                if (matches.size >= MAX_MATCHES) break
+        binding.officeView.clearMatches()
+        binding.searchCount.text = ""
+        searchJob = lifecycleScope.launch {
+            // A pass over every paragraph of a long document is long enough to freeze the screen,
+            // so it runs in the background. The layouts are finished and never change, which is
+            // what makes reading them from another thread safe.
+            val found = withContext(Dispatchers.Default) {
+                val job = coroutineContext[Job]
+                val hits = binding.officeView.findMatches(needle, MAX_MATCHES) { job?.isActive == false }
+                ensureActive()
+                hits
             }
+            matches.clear()
+            matches += found
+            showSearchResult()
         }
+    }
+
+    private fun showSearchResult() {
         if (matches.isEmpty()) {
             binding.searchCount.text = getString(R.string.no_matches)
             binding.officeView.clearMatches()
@@ -747,7 +881,61 @@ class OfficeActivity : AppCompatActivity() {
         return true
     }
 
+    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
+        menu.findItem(R.id.action_slideshow)?.isVisible =
+            document?.kind == top.teamaos.pdfreader.office.OfficeKind.SLIDES
+        return super.onPrepareOptionsMenu(menu)
+    }
+
+    // ------------------------------------------------------------------ slide show
+
+    /** What the slide show hid, and how each one was, so leaving it puts the screen back exactly. */
+    private var hiddenForSlideShow: List<Pair<View, Int>> = emptyList()
+
+    /**
+     * Present the deck: sideways, full screen, no bars, one slide at a time from the one being
+     * looked at. Tapping or swiping moves between slides; Back ends it on the slide reached.
+     */
+    private fun startSlideShow() {
+        if (binding.officeView.pageCount == 0 || binding.officeView.isSlideShow) return
+        if (searchOpen) closeSearch()
+        if (binding.textActionBar.visibility == View.VISIBLE) clearSelection()
+        hiddenForSlideShow = listOf(
+            binding.toolbar,
+            binding.bottomBarScroller,
+            binding.zoomSliderBar,
+            binding.limitationNote,
+            binding.fastScroll,
+            binding.pageChip,
+        ).map { it to it.visibility }
+        hiddenForSlideShow.forEach { (view, _) -> view.visibility = View.GONE }
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            hide(WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        binding.officeView.startSlideShow(binding.officeView.currentPage)
+        Toast.makeText(this, R.string.slideshow_hint, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun stopSlideShow() {
+        if (!binding.officeView.isSlideShow) return
+        binding.officeView.stopSlideShow()
+        WindowCompat.getInsetsController(window, window.decorView)
+            .show(WindowInsetsCompat.Type.systemBars())
+        hiddenForSlideShow.forEach { (view, visibility) -> view.visibility = visibility }
+        hiddenForSlideShow = emptyList()
+        applyHeaderInset()
+        applyKeepScreenOn()
+        applyOrientation()
+    }
+
     override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
+        R.id.action_slideshow -> {
+            startSlideShow()
+            true
+        }
         R.id.action_search -> {
             openSearch()
             true
@@ -765,6 +953,10 @@ class OfficeActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_URI = "top.teamaos.pdfreader.OFFICE_URI"
+        private const val TAG = "OfficeActivity"
+
+        /** The slider's top end for page-shaped documents: 2^3, so 800 %. */
+        private const val ZOOM_SLIDER_MAX_LOG2 = 3f
 
         /** How long after the last page change the position is written. */
         private const val SAVE_POSITION_DELAY_MS = 2500L

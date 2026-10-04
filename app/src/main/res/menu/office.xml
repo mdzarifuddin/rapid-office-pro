@@ -2,6 +2,14 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <!-- Only shown for presentations; see OfficeActivity.onPrepareOptionsMenu. -->
+    <item
+        android:id="@+id/action_slideshow"
+        android:icon="@drawable/ic_slideshow"
+        android:title="@string/action_slideshow"
+        android:visible="false"
+        app:showAsAction="ifRoom" />
+
     <item
         android:id="@+id/action_search"
         android:icon="@drawable/ic_search"

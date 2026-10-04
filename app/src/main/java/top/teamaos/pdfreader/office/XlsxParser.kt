@@ -2,9 +2,6 @@ package top.teamaos.pdfreader.office
 
 import org.xmlpull.v1.XmlPullParser
 import java.io.File
-import java.util.Calendar
-import java.util.Locale
-import java.util.TimeZone
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.roundToLong
@@ -37,16 +34,16 @@ object XlsxParser {
             val sheets = readSheetList(open, workbookPart, relationships)
             if (sheets.isEmpty()) return@use null
 
-            var truncated = false
+            // One set of limits for the whole workbook: it is the total that has to fit in memory.
+            val limits = GridLimits()
             val sections = sheets.mapNotNull { sheet ->
-                val data = open.bytes(sheet.part) ?: return@mapNotNull null
-                val grid = readSheet(data, sharedStrings, styles)
-                if (grid.truncated) truncated = true
+                checkCancelled()
+                val contents = readSheet(open, sheet.part, sharedStrings, styles, limits)
+                    ?: return@mapNotNull null
                 Section.Grid(
                     title = sheet.name,
-                    rows = grid.rows,
-                    columnWidthsPt = grid.columnWidths,
-                    frozenRows = 0,
+                    grid = contents.grid,
+                    columnWidthsPt = contents.columnWidths,
                 )
             }
             if (sections.isEmpty()) return@use null
@@ -56,11 +53,7 @@ object XlsxParser {
                 displayName = displayName,
                 sections = sections,
                 outline = sections.mapIndexed { index, section -> OutlineEntry(section.title, index) },
-                limitationNote = if (truncated) {
-                    "This workbook is larger than $MAX_ROWS rows a sheet; the rest is not shown."
-                } else {
-                    null
-                },
+                limitationNote = limits.note,
             )
         }
     }
@@ -136,6 +129,10 @@ object XlsxParser {
         }
 
         fun boldFor(styleIndex: Int): Boolean = boldOfXf.getOrNull(styleIndex) ?: false
+
+        private val looks = HashMap<Int, NumberLook>()
+
+        fun lookFor(styleIndex: Int): NumberLook = looks.getOrPut(styleIndex) { lookOf(formatFor(styleIndex)) }
     }
 
     private fun readStyles(pack: OoxmlPackage): CellStyles {
@@ -178,21 +175,26 @@ object XlsxParser {
         return CellStyles(numberFormats, formatOfXf, boldOfXf)
     }
 
-    private class SheetContents(
-        val rows: List<List<GridCell>>,
-        val columnWidths: List<Float>,
-        val truncated: Boolean,
-    )
+    private class SheetContents(val grid: GridData, val columnWidths: List<Float>)
 
+    /**
+     * One sheet, streamed out of the zip and straight into a [GridBuilder].
+     *
+     * Linear in the size of the sheet and allocation-light on purpose: per cell there is one
+     * string for its text and nothing else, number formats are worked out once per style rather
+     * than once per cell, and dates are computed with arithmetic instead of a Calendar.
+     */
     private fun readSheet(
-        data: ByteArray,
+        pack: OoxmlPackage,
+        part: String,
         sharedStrings: List<String>,
         styles: CellStyles,
-    ): SheetContents {
-        val rows = mutableListOf<MutableList<GridCell>>()
-        val declaredWidths = mutableMapOf<Int, Float>()
-        var widestColumn = 0
-        var truncated = false
+        limits: GridLimits,
+    ): SheetContents? {
+        val builder = GridBuilder(limits)
+        val declaredWidths = HashMap<Int, Float>()
+        // Style index and kind of cell to the grid's own style, worked out once per combination.
+        val gridStyles = HashMap<Int, Int>()
 
         var rowIndex = -1
         var column = 0
@@ -201,27 +203,11 @@ object XlsxParser {
         val value = StringBuilder()
         var inValue = false
         var inInlineText = false
+        var rowsSeen = 0
 
-        OoxmlPackage.parse(data) { parser ->
+        val found = OoxmlPackage.parseEntry(pack, part) { parser ->
             when (parser.eventType) {
                 XmlPullParser.START_TAG -> when (OoxmlPackage.localName(parser.name)) {
-                    "col" -> {
-                        val from = OoxmlPackage.attr(parser, "min")?.toIntOrNull() ?: return@parse
-                        val to = OoxmlPackage.attr(parser, "max")?.toIntOrNull() ?: from
-                        val width = OoxmlPackage.attr(parser, "width")?.toFloatOrNull() ?: return@parse
-                        // Excel's column width is in characters of the default font; the usual
-                        // conversion is seven pixels a character at 96 dpi, which is 5.25 points.
-                        for (index in from..minOf(to, MAX_COLUMNS)) {
-                            declaredWidths[index - 1] = (width * CHAR_WIDTH_PT).coerceIn(18f, 260f)
-                        }
-                    }
-                    "row" -> {
-                        val declared = OoxmlPackage.attr(parser, "r")?.toIntOrNull()
-                        rowIndex = (declared?.minus(1)) ?: (rowIndex + 1)
-                        column = 0
-                        if (rowIndex >= MAX_ROWS) truncated = true
-                        while (rows.size <= minOf(rowIndex, MAX_ROWS - 1)) rows.add(mutableListOf())
-                    }
                     "c" -> {
                         val reference = OoxmlPackage.attr(parser, "r")
                         column = reference?.let { columnOf(it) } ?: column
@@ -231,23 +217,52 @@ object XlsxParser {
                     }
                     "v" -> inValue = true
                     "t" -> inInlineText = true
+                    "row" -> {
+                        val declared = OoxmlPackage.attr(parser, "r")?.toIntOrNull()
+                        rowIndex = (declared?.minus(1))?.coerceAtLeast(rowIndex) ?: (rowIndex + 1)
+                        column = 0
+                        if (++rowsSeen and 0x3FF == 0) checkCancelled()
+                        if (builder.full) throw OoxmlPackage.Stop()
+                    }
+                    "col" -> {
+                        // A zero or negative min would make this loop run billions of times.
+                        val from = OoxmlPackage.attr(parser, "min")?.toIntOrNull()?.coerceAtLeast(1)
+                            ?: return@parseEntry
+                        val to = OoxmlPackage.attr(parser, "max")?.toIntOrNull() ?: from
+                        val width = OoxmlPackage.attr(parser, "width")?.toFloatOrNull()
+                            ?.takeIf { it.isFinite() } ?: return@parseEntry
+                        // Excel's column width is in characters of the default font; the usual
+                        // conversion is seven pixels a character at 96 dpi, which is 5.25 points.
+                        for (index in from..minOf(to, MAX_COLUMNS)) {
+                            declaredWidths[index - 1] = (width * CHAR_WIDTH_PT).coerceIn(18f, 260f)
+                        }
+                    }
                 }
                 XmlPullParser.TEXT -> if (inValue || inInlineText) value.append(parser.text)
                 XmlPullParser.END_TAG -> when (OoxmlPackage.localName(parser.name)) {
                     "v" -> inValue = false
                     "t" -> inInlineText = false
                     "c" -> {
-                        if (rowIndex in 0 until MAX_ROWS && column in 0 until MAX_COLUMNS) {
+                        if (rowIndex >= 0 && column in 0 until MAX_COLUMNS && value.isNotEmpty()) {
                             val text = displayValue(value.toString(), cellType, styleIndex, sharedStrings, styles)
                             if (text.isNotEmpty()) {
-                                val row = rows[rowIndex]
-                                while (row.size <= column) row += EMPTY_CELL
-                                row[column] = GridCell(
-                                    text = text,
-                                    bold = styles.boldFor(styleIndex),
-                                    align = if (isNumeric(cellType, text)) Align.RIGHT else Align.LEFT,
-                                )
-                                if (column > widestColumn) widestColumn = column
+                                val numeric = isNumeric(cellType)
+                                val bold = styles.boldFor(styleIndex)
+                                // Plain cells need no stored style: the grid right-aligns what
+                                // reads as a number by itself. Only cells where that guess would
+                                // be wrong, or that are bold, carry one.
+                                val auto = GridData.looksNumeric(text, 0, text.length)
+                                val style = if (!bold && auto == numeric) {
+                                    0
+                                } else {
+                                    val key = styleIndex * 2 + if (numeric) 1 else 0
+                                    gridStyles.getOrPut(key) {
+                                        builder.styleOf(
+                                            GridStyle(bold = bold, align = if (numeric) Align.RIGHT else Align.LEFT),
+                                        )
+                                    }
+                                }
+                                builder.put(rowIndex, column, text, style)
                             }
                         }
                         column++
@@ -255,20 +270,16 @@ object XlsxParser {
                 }
             }
         }
+        if (!found) return null
 
-        val columnCount = (widestColumn + 1).coerceAtLeast(1)
-        val widths = (0 until columnCount).map { declaredWidths[it] ?: DEFAULT_COLUMN_PT }
-        // Trim the trailing empty rows Excel likes to leave behind.
-        val lastUsed = rows.indexOfLast { row -> row.any { it.text.isNotEmpty() } }
-        val kept = if (lastUsed >= 0) rows.subList(0, lastUsed + 1) else emptyList()
-        return SheetContents(kept.map { it.toList() }, widths, truncated)
+        val grid = builder.build()
+        val widths = (0 until grid.columnCount).map { declaredWidths[it] ?: DEFAULT_COLUMN_PT }
+        return SheetContents(grid, widths)
     }
 
-    private val EMPTY_CELL = GridCell("")
-
-    private fun isNumeric(type: String?, text: String): Boolean =
-        type != "s" && type != "str" && type != "inlineStr" &&
-            text.isNotEmpty() && text.first().let { it.isDigit() || it == '-' || it == '.' }
+    /** Whether Excel stored the cell as a number (or a date, which is a number in a costume). */
+    private fun isNumeric(type: String?): Boolean =
+        type == null || type == "n" || type == "d"
 
     /** "BC12" names column 54; the letters are base-26 with no zero. */
     private fun columnOf(reference: String): Int {
@@ -276,6 +287,8 @@ object XlsxParser {
         for (character in reference) {
             if (!character.isLetter()) break
             column = column * 26 + (character.uppercaseChar() - 'A' + 1)
+            // Far past any real column; stop before a long run of letters overflows into one.
+            if (column > MAX_COLUMN_REFERENCE) return MAX_COLUMN_REFERENCE
         }
         return (column - 1).coerceAtLeast(0)
     }
@@ -294,10 +307,53 @@ object XlsxParser {
             "b" -> if (raw.trim() == "1") "TRUE" else "FALSE"
             "e" -> raw
             else -> {
-                val number = raw.trim().toDoubleOrNull() ?: return raw
-                formatNumber(number, styles.formatFor(styleIndex))
+                // "NaN" and "1e999" parse as numbers that every formatter below chokes on, and
+                // they are not numbers anyone typed; show them as the text they are.
+                val number = raw.trim().toDoubleOrNull()?.takeIf { it.isFinite() } ?: return raw
+                formatNumber(number, styles.lookFor(styleIndex))
             }
         }
+    }
+
+    /**
+     * What a number format asks for, worked out once per style.
+     *
+     * Reading the format code — stripping colours and quoted text, finding decimals and date parts
+     * — used to happen for every cell, with two regular expressions each time; on a sheet of half
+     * a million numbers that alone took longer than everything else put together.
+     */
+    private class NumberLook(
+        val date: Boolean,
+        val hasDate: Boolean,
+        val hasTime: Boolean,
+        val percent: Boolean,
+        val decimals: Int?,
+        val grouped: Boolean,
+    )
+
+    private val PLAIN_NUMBER = NumberLook(false, false, false, false, null, false)
+
+    private fun lookOf(format: String?): NumberLook {
+        val code = format?.substringBefore(';')?.trim() ?: return PLAIN_NUMBER
+        if (looksLikeDate(code)) {
+            return NumberLook(
+                date = true,
+                hasDate = code.any { it == 'y' || it == 'd' } || code.contains('/'),
+                hasTime = code.contains(':'),
+                percent = false,
+                decimals = null,
+                grouped = false,
+            )
+        }
+        return NumberLook(
+            date = false,
+            hasDate = false,
+            hasTime = false,
+            percent = code.contains('%'),
+            decimals = code.substringAfter('.', "").takeWhile { it == '0' || it == '#' }
+                .count { it == '0' }.coerceAtMost(MAX_DECIMALS),
+            grouped = code.contains("#,#"),
+        )
     }
 
     /**
@@ -308,34 +364,56 @@ object XlsxParser {
      * honest number. A half-implemented format language that quietly shows the wrong figure would
      * be far worse than one that shows the right figure plainly.
      */
-    private fun formatNumber(number: Double, format: String?): String {
-        val code = format?.substringBefore(';')?.trim()
-        if (code != null && looksLikeDate(code)) return formatDate(number, code)
+    private fun formatNumber(number: Double, look: NumberLook): String {
+        if (look.date && abs(number) < MAX_DATE_SERIAL) return formatDate(number, look)
 
-        val percent = code?.contains('%') == true
-        val scaled = if (percent) number * 100 else number
-        val decimals = code?.substringAfter('.', "")?.takeWhile { it == '0' || it == '#' }?.count { it == '0' }
-        val grouped = code?.contains(",") == true && code.contains("#,#")
-
+        val scaled = if (look.percent) number * 100 else number
+        if (!scaled.isFinite()) return number.toString()
+        val decimals = look.decimals
         val text = when {
-            decimals != null && decimals > 0 ->
-                String.format(Locale.US, "%,.${decimals}f", scaled).let {
-                    if (grouped) it else it.replace(",", "")
-                }
-            abs(scaled - scaled.roundToLong()) < 1e-9 -> {
-                val whole = scaled.roundToLong()
-                if (grouped) String.format(Locale.US, "%,d", whole) else whole.toString()
+            decimals != null && decimals > 0 -> {
+                // Rounded from the shortest decimal form of the double, half up — the same figure
+                // String.format gives, without its cost.
+                val fixed = java.math.BigDecimal(scaled.toString())
+                    .setScale(decimals, java.math.RoundingMode.HALF_UP)
+                    .toPlainString()
+                if (look.grouped) grouped(fixed) else fixed
             }
-            else -> trimZeros(String.format(Locale.US, "%.6f", scaled))
+            abs(scaled - scaled.roundToLong()) < 1e-9 -> {
+                val whole = scaled.roundToLong().toString()
+                if (look.grouped) grouped(whole) else whole
+            }
+            else -> trimZeros(
+                java.math.BigDecimal(scaled.toString())
+                    .setScale(6, java.math.RoundingMode.HALF_UP)
+                    .toPlainString(),
+            )
         }
-        return if (percent) "$text%" else text
+        return if (look.percent) "$text%" else text
+    }
+
+    /** Thousands separators in the whole-number part of a plain decimal string. */
+    private fun grouped(text: String): String {
+        val negative = text.startsWith('-')
+        val digitsStart = if (negative) 1 else 0
+        val point = text.indexOf('.').let { if (it < 0) text.length else it }
+        val whole = point - digitsStart
+        if (whole <= 3) return text
+        val out = StringBuilder(text.length + whole / 3)
+        if (negative) out.append('-')
+        for (index in digitsStart until point) {
+            if (index > digitsStart && (point - index) % 3 == 0) out.append(',')
+            out.append(text[index])
+        }
+        out.append(text, point, text.length)
+        return out.toString()
     }
 
     private fun trimZeros(text: String): String =
         if (!text.contains('.')) text else text.trimEnd('0').trimEnd('.')
 
     private fun looksLikeDate(code: String): Boolean {
-        val stripped = code.replace(Regex("\\[[^]]*]"), "").replace("\"[^\"]*\"".toRegex(), "")
+        val stripped = code.replace(BRACKETED, "").replace(QUOTED, "")
         return stripped.any { it == 'y' || it == 'd' } ||
             (stripped.contains('m') && stripped.contains(':').not() && stripped.contains('/')) ||
             stripped.contains("h:") || stripped.contains("hh:")
@@ -346,37 +424,49 @@ object XlsxParser {
      *
      * That bug is part of the file format — every date in every workbook is offset by it — so the
      * epoch used here is 30 December 1899, which cancels it out for every date from March 1900 on.
+     * The calendar date is computed directly (the civil-from-days method), which is exact for
+     * every date and costs a few divisions instead of a Calendar per cell.
      */
-    private fun formatDate(serial: Double, code: String): String {
-        val days = floor(serial).toLong()
-        val fraction = serial - days
-        val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"), Locale.US).apply {
-            clear()
-            set(1899, Calendar.DECEMBER, 30, 0, 0, 0)
-            add(Calendar.DAY_OF_MONTH, days.toInt())
-            add(Calendar.SECOND, (fraction * 86400).roundToLong().toInt())
+    private fun formatDate(serial: Double, look: NumberLook): String {
+        var days = floor(serial).toLong()
+        var seconds = ((serial - days) * 86400).roundToLong()
+        if (seconds >= 86400) {
+            days++
+            seconds -= 86400
         }
-        val hasDate = code.any { it == 'y' || it == 'd' } || code.contains('/')
-        val hasTime = code.contains(':')
-        val date = String.format(
-            Locale.US,
-            "%02d/%02d/%04d",
-            calendar.get(Calendar.DAY_OF_MONTH),
-            calendar.get(Calendar.MONTH) + 1,
-            calendar.get(Calendar.YEAR),
-        )
-        val time = String.format(
-            Locale.US,
-            "%02d:%02d",
-            calendar.get(Calendar.HOUR_OF_DAY),
-            calendar.get(Calendar.MINUTE),
-        )
-        return when {
-            hasDate && hasTime -> "$date $time"
-            hasTime -> time
-            else -> date
+        // Days since 1970-01-01, then to year, month and day.
+        val z = days - EXCEL_EPOCH_TO_UNIX_DAYS + 719468
+        val era = (if (z >= 0) z else z - 146096) / 146097
+        val dayOfEra = z - era * 146097
+        val yearOfEra = (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 - dayOfEra / 146096) / 365
+        val dayOfYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100)
+        val shifted = (5 * dayOfYear + 2) / 153
+        val day = dayOfYear - (153 * shifted + 2) / 5 + 1
+        val month = if (shifted < 10) shifted + 3 else shifted - 9
+        val year = yearOfEra + era * 400 + if (month <= 2) 1 else 0
+
+        val out = StringBuilder(16)
+        if (look.hasDate || !look.hasTime) {
+            pad(out, day, 2).append('/')
+            pad(out, month, 2).append('/')
+            pad(out, year, 4)
         }
+        if (look.hasTime) {
+            if (out.isNotEmpty()) out.append(' ')
+            pad(out, seconds / 3600, 2).append(':')
+            pad(out, seconds % 3600 / 60, 2)
+        }
+        return out.toString()
     }
+
+    private fun pad(out: StringBuilder, value: Long, width: Int): StringBuilder {
+        val text = value.toString()
+        repeat(width - text.length) { out.append('0') }
+        return out.append(text)
+    }
+
+    /** 1899-12-30 to 1970-01-01. */
+    private const val EXCEL_EPOCH_TO_UNIX_DAYS = 25569L
 
     /** The number formats Excel does not write down because every copy of Excel already knows them. */
     private fun builtInFormat(id: Int): String? = when (id) {
@@ -402,11 +492,23 @@ object XlsxParser {
         else -> null
     }
 
+    /**
+     * `[Red]`, `[$-409]` and the like. The closing bracket is escaped inside the class: whether
+     * `[^]]` means "not a bracket" differs between regex engines, and Android's is ICU.
+     * Compiled once rather than for every formatted cell.
+     */
+    private val BRACKETED = Regex("\\[[^\\]]*\\]")
+    private val QUOTED = Regex("\"[^\"]*\"")
+
+    /** Year 9999 is serial 2958465; anything beyond is not a date Calendar should be asked about. */
+    private const val MAX_DATE_SERIAL = 3_000_000.0
+    private const val MAX_DECIMALS = 30
+    private const val MAX_COLUMN_REFERENCE = 1 shl 20
+
     /** One character of Excel's default font, in points. */
     private const val CHAR_WIDTH_PT = 5.25f
     private const val DEFAULT_COLUMN_PT = 48f
 
     /** Past this a sheet stops being something anyone reads on a phone. */
-    private const val MAX_ROWS = 20000
-    private const val MAX_COLUMNS = 128
+    private const val MAX_COLUMNS = GridBuilder.MAX_COLUMNS
 }

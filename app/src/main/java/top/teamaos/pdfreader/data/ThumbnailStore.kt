@@ -24,6 +24,11 @@ class ThumbnailStore private constructor(context: Context) {
 
     private val directory = File(context.cacheDir, "thumbs").apply { mkdirs() }
 
+    /** Drop the in-memory copies too, so a cleared cache does not keep serving old covers. */
+    fun clearMemory() {
+        memory.evictAll()
+    }
+
     private val memory = object : LruCache<String, Bitmap>(MEMORY_BUDGET_BYTES) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
     }
@@ -46,6 +51,9 @@ class ThumbnailStore private constructor(context: Context) {
 
     suspend fun save(key: String, bitmap: Bitmap) = withContext(Dispatchers.IO) {
         runCatching {
+            // "Clear cache" in Settings deletes this whole directory while the store lives on, so
+            // it is recreated on every write rather than trusted to still be there from init.
+            directory.mkdirs()
             FileOutputStream(fileFor(key)).use { out ->
                 bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
             }
