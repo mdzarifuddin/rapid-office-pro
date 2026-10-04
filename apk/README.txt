@@ -53,7 +53,7 @@ smooth however big the sheet is. Pinch out to see all of it; zoom in much furthe
 normal page.
 
 PowerPoint and other presentations have a Slide show button (▶) at the top: full screen,
-sideways, one slide at a time. Tap or swipe for the next slide, tap the left edge to go back,
+upright or sideways — it turns with the phone — one slide at a time. Tap or swipe for the next slide, tap the left edge to go back,
 press Back to finish.
 
 Word, Excel and PowerPoint files from 2007 onwards are read fully: text with its bold,

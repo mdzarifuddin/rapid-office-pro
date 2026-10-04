@@ -178,7 +178,8 @@ class OfficeActivity : AppCompatActivity() {
         } else {
             0
         }
-        val wanted = if (chromeVisible && !searchOpen) headerHeight + note else 0
+        // A slide show has the whole screen: no room kept for a header it has hidden.
+        val wanted = if (chromeVisible && !searchOpen && !binding.officeView.isSlideShow) headerHeight + note else 0
         val current = (binding.officeView.layoutParams as? FrameLayout.LayoutParams)?.topMargin
         if (current == wanted) return
         binding.officeView.updateLayoutParams<FrameLayout.LayoutParams> { topMargin = wanted }
@@ -893,7 +894,7 @@ class OfficeActivity : AppCompatActivity() {
     private var hiddenForSlideShow: List<Pair<View, Int>> = emptyList()
 
     /**
-     * Present the deck: sideways, full screen, no bars, one slide at a time from the one being
+     * Present the deck: full screen, no bars, one slide at a time from the one being
      * looked at. Tapping or swiping moves between slides; Back ends it on the slide reached.
      */
     private fun startSlideShow() {
@@ -914,8 +915,10 @@ class OfficeActivity : AppCompatActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        // Upright or sideways, whichever way the phone is held: the slide is fitted either way.
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_USER
         binding.officeView.startSlideShow(binding.officeView.currentPage)
+        applyHeaderInset()
         Toast.makeText(this, R.string.slideshow_hint, Toast.LENGTH_SHORT).show()
     }
 
