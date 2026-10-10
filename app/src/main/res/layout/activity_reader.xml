@@ -470,6 +470,22 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/rangeButton"
+                    style="@style/ReaderBarButton"
+                    android:contentDescription="@string/action_select_range">
+
+                    <ImageView
+                        style="@style/ReaderBarIcon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_page_range"
+                        app:tint="#FFFFFFFF" />
+
+                    <TextView
+                        style="@style/ReaderBarLabel"
+                        android:text="@string/label_range" />
+                </LinearLayout>
+
+                <LinearLayout
                     android:id="@+id/extractButton"
                     style="@style/ReaderBarButton"
                     android:contentDescription="@string/action_extract">
@@ -477,7 +493,7 @@
                     <ImageView
                         style="@style/ReaderBarIcon"
                         android:contentDescription="@null"
-                        android:src="@drawable/ic_share"
+                        android:src="@drawable/ic_pdf_new"
                         app:tint="#FFFFFFFF" />
 
                     <TextView
@@ -1096,6 +1112,20 @@
         android:paddingHorizontal="20dp"
         android:paddingVertical="12dp"
         android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+        android:textColor="#FFFFFFFF"
+        android:visibility="gone" />
+
+    <!-- Current page, dimmed, sitting just above whichever tool bar is open. -->
+    <TextView
+        android:id="@+id/toolPageLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:alpha="0.6"
+        android:background="@drawable/bg_page_pill"
+        android:paddingHorizontal="14dp"
+        android:paddingVertical="6dp"
+        android:textAppearance="@style/TextAppearance.Material3.LabelLarge"
         android:textColor="#FFFFFFFF"
         android:visibility="gone" />
 

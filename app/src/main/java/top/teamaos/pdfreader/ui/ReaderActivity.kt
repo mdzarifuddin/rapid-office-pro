@@ -111,6 +111,7 @@ class ReaderActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityReaderBinding.inflate(layoutInflater)
+        binding.root.viewTreeObserver.addOnGlobalLayoutListener(toolPageLabelUpdater)
         setContentView(binding.root)
 
         setSupportActionBar(binding.toolbar)
@@ -280,6 +281,7 @@ class ReaderActivity : AppCompatActivity() {
             if (allPagesSelected()) binding.pdfView.clearSelection() else binding.pdfView.selectAllPages()
         }
         binding.extractButton.setOnClickListener { extractSelection() }
+        binding.rangeButton.setOnClickListener { promptPageRange() }
         binding.cropButton.setOnClickListener { startCrop() }
         binding.splitButton.setOnClickListener { promptSplit() }
         binding.drawButton.setOnClickListener { enterDrawMode() }
@@ -480,10 +482,33 @@ class ReaderActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * Keep a dimmed page number just above whichever tool bar is open, until the tool closes.
+     * Driven by layout rather than by each tool's enter/exit, so a new tool gets it for free.
+     */
+    private val toolPageLabelUpdater = android.view.ViewTreeObserver.OnGlobalLayoutListener {
+        val label = binding.toolPageLabel
+        val bar = listOf(binding.editBar, binding.drawBar, binding.zoomSliderBar, binding.textActionBar)
+            .filter { it.visibility == View.VISIBLE && it.height > 0 }
+            .minByOrNull { it.top }
+        val total = binding.pdfView.pageCount
+        if (bar == null || total <= 0) {
+            if (label.visibility != View.GONE) label.visibility = View.GONE
+            return@OnGlobalLayoutListener
+        }
+        val text = getString(R.string.page_of, binding.pdfView.currentPage + 1, total)
+        if (label.text.toString() != text) label.text = text
+        if (label.visibility != View.VISIBLE) label.visibility = View.VISIBLE
+        val gap = (8 * resources.displayMetrics.density)
+        val y = bar.top + bar.translationY - label.height - gap
+        if (label.translationY != y - label.top) label.translationY = y - label.top
+    }
+
     private fun onPageChanged(page: Int) {
         val total = binding.pdfView.pageCount
         if (total <= 0) return
         binding.pageIndicator.text = getString(R.string.page_of, page + 1, total)
+        toolPageLabelUpdater.onGlobalLayout()
         binding.fastScroll.progress = if (total > 1) page.toFloat() / (total - 1) else 0f
         updateScrollLabels(page, total)
         binding.fastScroll.flash()
@@ -732,6 +757,57 @@ class ReaderActivity : AppCompatActivity() {
         binding.selectAllLabel.setText(if (all) R.string.label_select_none else R.string.label_select_all)
         binding.selectAllButton.contentDescription =
             getString(if (all) R.string.action_select_none else R.string.action_select_all)
+    }
+
+    /**
+     * Pick pages by typing them: "20-17, 24, 56-59". Ranges may be written either way round, and
+     * the result replaces whatever was selected so the field always says what will be built.
+     */
+    private fun promptPageRange() {
+        val total = binding.pdfView.pageCount
+        if (total <= 0) return
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT
+            hint = getString(R.string.range_hint)
+            setSingleLine()
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(getString(R.string.range_title) + " (1–$total)")
+            .setView(input)
+            .setPositiveButton(R.string.go, null)
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val pages = parsePageRange(input.text.toString(), total)
+                if (pages == null) {
+                    Toast.makeText(this, getString(R.string.range_invalid, total), Toast.LENGTH_SHORT).show()
+                } else {
+                    binding.pdfView.selectPages(pages)
+                    pages.minOrNull()?.let { binding.pdfView.goToPage(it) }
+                    dialog.dismiss()
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    /** Zero-based pages from text like "20-17,24,56-59", or null if it is empty or out of range. */
+    private fun parsePageRange(text: String, total: Int): Set<Int>? {
+        val pages = sortedSetOf<Int>()
+        val parts = text.split(',', ';', ' ').map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return null
+        for (part in parts) {
+            val bounds = part.split('-', '–', '—').map { it.trim() }
+            val first = bounds.firstOrNull()?.toIntOrNull() ?: return null
+            val last = if (bounds.size == 1) first else bounds.getOrNull(1)?.toIntOrNull() ?: return null
+            if (bounds.size > 2) return null
+            val low = minOf(first, last)
+            val high = maxOf(first, last)
+            if (low < 1 || high > total) return null
+            for (page in low..high) pages += page - 1
+        }
+        return pages
     }
 
     private fun allPagesSelected(): Boolean {

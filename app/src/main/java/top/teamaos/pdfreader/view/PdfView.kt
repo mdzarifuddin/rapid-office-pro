@@ -273,6 +273,14 @@ class PdfView @JvmOverloads constructor(
         invalidate()
     }
 
+    /** Replace the selection with [pages] (zero-based), ignoring any outside the document. */
+    fun selectPages(pages: Collection<Int>) {
+        selection.clear()
+        pages.filterTo(selection) { it in 0 until pageCount }
+        onSelectionChanged?.invoke(selection)
+        invalidate()
+    }
+
     fun clearSelection() {
         if (selection.isEmpty()) return
         selection.clear()

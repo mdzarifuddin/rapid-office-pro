@@ -173,6 +173,11 @@
     <string name="label_select_none">None</string>
     <string name="action_select_none">Deselect all</string>
     <string name="label_new_pdf">New PDF</string>
+    <string name="label_range">Batch select</string>
+    <string name="action_select_range">Batch select pages</string>
+    <string name="range_title">Batch select</string>
+    <string name="range_hint">e.g. 1-5, 9, 20-17, 56-59</string>
+    <string name="range_invalid">Enter page numbers between 1 and %1$d</string>
     <string name="label_crop">Crop</string>
     <string name="action_zoom">Zoom</string>
     <string name="action_crop">Crop pages</string>

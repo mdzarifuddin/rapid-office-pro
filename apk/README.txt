@@ -1,7 +1,7 @@
-Rapid Office Pro — v1.0
+Rapid Office Pro — v1.1
 =======================
 
-RapidOfficePro-v1.0-b12.apk  — signed release build. Install this on your phone.
+RapidOfficePro-v1.1-b13.apk  — signed release build. Install this on your phone.
 
 A fast reader for PDF, Word, Excel, PowerPoint, OpenDocument, CSV, web pages and text files.
 It installs straight over Rapid PDF and the earlier Rapid Office Pro 2.x builds and keeps your
@@ -125,6 +125,8 @@ Three-dot menu > Edit pages, then tap pages to pick them.
                   selected page becomes two, in reading order, and a new PDF is made — you
                   choose whether the left or the right half comes first
   All             select every page
+  Batch select    type pages like 20-17, 24, 56-59 to pick them in one go (ranges can run
+                  either way); the pages are selected, ready for New PDF
   New PDF         build a new PDF from the selected pages, then share it or keep it
   Undo / Redo     the same history the brush uses: strokes, crops and rotations
   Done            leave
@@ -142,6 +144,15 @@ up front.
 
 Office files are measured once when opened and never again — zooming is a matrix, not a
 re-layout — so a Word file stays sharp at any zoom without re-rendering anything.
+
+
+What changed in 1.1
+-------------------
+- Batch select in Edit pages: type page numbers and ranges (20-17, 24, 56-59) to select them,
+  then make a new PDF and share it.
+- New PDF has its own icon instead of the share icon.
+- While any tool bar is open (edit pages, brush, zoom, text), the current page number shows
+  dimmed just above it, and goes away when the tool closes.
 
 
 What changed in 1.0

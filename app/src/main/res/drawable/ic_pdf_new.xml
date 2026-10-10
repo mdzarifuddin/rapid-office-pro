@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A page with a folded corner and an arrow leaving it: "make a PDF of these pages and send it". -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M13,3H7a2,2 0 0 0 -2,2v14a2,2 0 0 0 2,2h10a2,2 0 0 0 2,-2V9z M13,3v6h6"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M9,15h6 M12.5,12.5L15,15l-2.5,2.5"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>
