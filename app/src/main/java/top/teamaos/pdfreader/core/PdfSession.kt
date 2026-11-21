@@ -44,8 +44,8 @@ class PdfPasswordException(message: String) : IOException(message)
  * and close their own short-lived handles and so cannot race with the render thread's pages.
  */
 class PdfSession private constructor(
-    private val doc: PdfDocument,
-    private val pfd: ParcelFileDescriptor?,
+    private var doc: PdfDocument,
+    private var pfd: ParcelFileDescriptor?,
     val pageCount: Int,
     val docKey: String,
     /**
@@ -55,8 +55,13 @@ class PdfSession private constructor(
      * it is `/proc/self/fd/N` for the descriptor this session holds open, which lets the file be
      * read again without copying a single byte of it.
      */
-    val sourcePath: String?,
+    initialSourcePath: String?,
 ) : Closeable {
+
+    /** See the constructor note: where pdfium can reopen this document from. Changes on [recycle]. */
+    @Volatile
+    var sourcePath: String? = initialSourcePath
+        private set
 
     @Volatile
     private var closed = false
@@ -499,6 +504,44 @@ class PdfSession private constructor(
         if (closed) null else runCatching { doc.getDocumentMeta() }.getOrNull()
     }
 
+    /**
+     * Reopen the same file under a fresh pdfium document, so pdfium forgets everything it has
+     * parsed and cached since the file was first opened.
+     *
+     * pdfium keeps every object it reads — on a scanned document that is each page's image data —
+     * until the document is closed, so a long read through a big scan grows by about a megabyte a
+     * page and never shrinks. Reopening is the one way to give that back, and it costs a fraction
+     * of a second. Returns false, changing nothing, if there is anything unsaved (the rotations and
+     * crops live inside the open document), the file cannot be reopened, or it no longer has the
+     * same pages.
+     */
+    fun recycle(context: Context, password: String?): Boolean = synchronized(pdfium) {
+        if (closed || hasUnsavedChanges) return false
+        val fresh = try {
+            openHandles(context, Uri.parse(docKey), password)
+        } catch (e: Exception) {
+            return false
+        }
+        if (fresh.count != pageCount) {
+            runCatching { fresh.doc.close() }
+            runCatching { fresh.pfd.close() }
+            return false
+        }
+        pageLru.values.forEach { runCatching { it.close() } }
+        pageLru.clear()
+        PdfNative.closeLinkReader(linkReaderHandle)
+        linkReaderHandle = 0L
+        linkReaderTried = false
+        val oldDoc = doc
+        val oldPfd = pfd
+        doc = fresh.doc
+        pfd = fresh.pfd
+        sourcePath = fresh.sourcePath
+        runCatching { oldDoc.close() }
+        runCatching { oldPfd?.close() }
+        true
+    }
+
     override fun close() {
         synchronized(pdfium) {
             if (closed) return
@@ -559,6 +602,19 @@ class PdfSession private constructor(
          */
         @Throws(IOException::class)
         fun open(context: Context, uri: Uri, password: String? = null): PdfSession {
+            val handles = openHandles(context, uri, password)
+            return PdfSession(handles.doc, handles.pfd, handles.count, uri.toString(), handles.sourcePath)
+        }
+
+        private class Handles(
+            val doc: PdfDocument,
+            val pfd: ParcelFileDescriptor,
+            val count: Int,
+            val sourcePath: String?,
+        )
+
+        @Throws(IOException::class)
+        private fun openHandles(context: Context, uri: Uri, password: String?): Handles {
             val pfd = openDescriptor(context, uri) ?: throw IOException("Could not open $uri")
             val core = PdfiumCore(context.applicationContext, READER_CONFIG)
             val doc = try {
@@ -579,7 +635,7 @@ class PdfSession private constructor(
                 runCatching { pfd.close() }
                 throw IOException("Document has no pages")
             }
-            return PdfSession(doc, pfd, count, uri.toString(), sourcePathFor(uri, pfd))
+            return Handles(doc, pfd, count, sourcePathFor(uri, pfd))
         }
 
         /** Where pdfium can reopen this document from; see [PdfSession.sourcePath]. */
@@ -605,6 +661,8 @@ class PdfSession private constructor(
             val text = (e.message ?: "").lowercase()
             return if ("password" in text || "encrypt" in text) {
                 PdfPasswordException(e.message ?: "Password required")
+            } else if ("not in pdf format" in text || "corrupt" in text) {
+                IOException("This PDF is damaged or incomplete, so it cannot be read. Try downloading or copying it again.", e)
             } else {
                 IOException(e.message ?: "Could not open document", e)
             }

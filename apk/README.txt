@@ -1,7 +1,7 @@
-Rapid Office Pro — v1.1
+Rapid Office Pro — v1.2
 =======================
 
-RapidOfficePro-v1.1-b13.apk  — signed release build. Install this on your phone.
+RapidOfficePro-v1.2-b14.apk  — signed release build. Install this on your phone.
 
 A fast reader for PDF, Word, Excel, PowerPoint, OpenDocument, CSV, web pages and text files.
 It installs straight over Rapid PDF and the earlier Rapid Office Pro 2.x builds and keeps your
@@ -144,6 +144,25 @@ up front.
 
 Office files are measured once when opened and never again — zooming is a matrix, not a
 re-layout — so a Word file stays sharp at any zoom without re-rendering anything.
+
+
+What changed in 1.2
+-------------------
+- Share is in the reading toolbar, right after Lock. It opens the page picker straight away:
+  tap pages, or press Batch select (next to the cross) and type 20-17, 24, 56-59, then New PDF.
+  Edit pages still works the same, so a page can be rotated, cropped or brushed first and shared
+  after.
+- Name the new PDF before sharing. The box starts with the usual name, so Share is still one
+  tap; type over it for your own name. Save keeps it in Downloads under that name too.
+- Long reads of big scanned PDFs no longer slow the phone down. pdfium keeps everything it has
+  read from a document until the document closes, about a megabyte a page, so a long session on
+  a scan grew past 400 MB. The document is now quietly reopened when the screen is still and
+  nothing is unsaved, which brought a test back from 403 MB to about 100 MB, and the reader also
+  gives memory back when the phone asks for it or the app is left.
+- The bottom bar is wider and shows as many whole tools as the screen has room for.
+- A damaged or cut-off PDF says so plainly instead of a technical message.
+- "1 page selected" instead of "1 pages selected".
+- Links in a PDF (web, email, phone, jump to a page) work by touch, as before.
 
 
 What changed in 1.1

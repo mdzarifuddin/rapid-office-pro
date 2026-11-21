@@ -253,6 +253,8 @@ class ReaderActivity : AppCompatActivity() {
         }
         binding.toolContentsButton.setOnClickListener { showOutline() }
         binding.toolThumbnailsButton.setOnClickListener { showThumbnails() }
+        // Quick share: same page picker as Edit, opened empty so pages can be tapped or typed in.
+        binding.toolShareButton.setOnClickListener { enterEditMode(null) }
         binding.toolEditButton.setOnClickListener { enterEditMode(binding.pdfView.currentPage) }
         binding.toolColourButton.setOnClickListener { chooseColourMode() }
         binding.viewModeButton.setOnClickListener { chooseViewMode() }
@@ -846,20 +848,62 @@ class ReaderActivity : AppCompatActivity() {
                 Toast.makeText(this, R.string.extract_failed, Toast.LENGTH_LONG).show()
                 return@extractPages
             }
-            MaterialAlertDialogBuilder(this)
-                .setTitle(getString(R.string.extract_title, pages.size))
-                .setItems(
-                    arrayOf(getString(R.string.extract_share), getString(R.string.extract_save)),
-                ) { _, which ->
-                    if (which == 0) {
-                        Sharing.share(this, Uri.fromFile(file), file.name)
-                    } else {
-                        copyToDownloads(file)
-                    }
-                }
-                .setNegativeButton(R.string.cancel, null)
-                .show()
+            offerNewPdf(file, pages.size)
         }
+    }
+
+    /**
+     * The new PDF is ready: let the reader name it, then share it or keep it.
+     *
+     * The name starts as the default (document name and the pages taken), so Share on its own is
+     * one tap, and anything typed replaces it. The file only changes name when one of the buttons
+     * is pressed, so backing out leaves nothing renamed.
+     */
+    private fun offerNewPdf(file: File, pageCount: Int) {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT
+            setSingleLine()
+            hint = getString(R.string.extract_name_hint)
+            setText(file.nameWithoutExtension)
+            selectAll()
+        }
+        val side = (20 * resources.displayMetrics.density).toInt()
+        val holder = FrameLayout(this).apply {
+            setPadding(side, side / 2, side, 0)
+            addView(input)
+        }
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(resources.getQuantityString(R.plurals.extract_title, pageCount, pageCount))
+            .setView(holder)
+            .setPositiveButton(R.string.action_share) { _, _ ->
+                val named = withChosenName(file, input.text.toString())
+                Sharing.share(this, Uri.fromFile(named), named.name)
+            }
+            .setNeutralButton(R.string.extract_save_short) { _, _ ->
+                copyToDownloads(withChosenName(file, input.text.toString()))
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        dialog.show()
+    }
+
+    /**
+     * [file] under the name the reader typed, or unchanged if they left it blank. Characters a
+     * file name cannot hold are dropped, and ".pdf" is added so the name always ends the way
+     * other apps expect.
+     */
+    private fun withChosenName(file: File, typed: String): File {
+        val base = typed.trim()
+            .removeSuffix(".pdf").removeSuffix(".PDF")
+            .replace(Regex("""[\/:*?"<>|\p{Cntrl}]"""), "")
+            .trim().trimEnd('.').trim()
+            .take(MAX_FILE_NAME_CHARS)
+        if (base.isEmpty()) return file
+        val target = File(file.parentFile, "$base.pdf")
+        if (target == file) return file
+        if (target.exists()) target.delete()
+        return if (file.renameTo(target)) target else file
     }
 
     // ------------------------------------------------------------- brush and undo
@@ -2088,9 +2132,12 @@ class ReaderActivity : AppCompatActivity() {
         super.onTrimMemory(level)
         if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
             DocumentTabs.trimBackgroundTabs()
+            controller?.onMemoryPressure(appHidden = true)
         } else if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
-            // Still on screen but the phone is short of memory: the other tabs give back theirs.
+            // Still on screen but the phone is short of memory: the other tabs give back theirs,
+            // and so does the document being read.
             DocumentTabs.parkBackgroundTabs()
+            controller?.onMemoryPressure(appHidden = false)
         }
     }
 
@@ -2114,6 +2161,8 @@ class ReaderActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val MAX_FILE_NAME_CHARS = 100
+
         const val EXTRA_URI = "top.teamaos.pdfreader.EXTRA_URI"
         /** A whole paragraph is not a search term; long selections are trimmed before searching. */
         private const val MAX_SEARCH_FROM_SELECTION = 60

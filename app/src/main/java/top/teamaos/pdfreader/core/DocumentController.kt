@@ -96,6 +96,7 @@ class DocumentController(
 
     private fun notifyInvalidated() {
         onInvalidate?.invoke()
+        scheduleMemoryCheck()
         // Copy first: a listener is free to unregister itself while being told.
         extraInvalidateListeners.toList().forEach { it() }
     }
@@ -664,9 +665,70 @@ class DocumentController(
         Log.i(TAG, "woke $displayName")
     }
 
+    // ------------------------------------------------------------- native memory
+
+    /**
+     * pdfium keeps every object it parses until the document is closed, which on a scanned
+     * document means about a megabyte per page read and no way back down. Once the screen has been
+     * still for a moment and the process has grown past [recycleThresholdBytes], the document is
+     * quietly reopened, which makes pdfium forget all of it. Nothing visible changes.
+     */
+    private val recycleThresholdBytes: Long by lazy {
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val info = android.app.ActivityManager.MemoryInfo().also { manager.getMemoryInfo(it) }
+        (info.totalMem / 12L).coerceIn(RECYCLE_MIN_BYTES, RECYCLE_MAX_BYTES)
+    }
+
+    private var lastRecycleAt = 0L
+
+    private val memoryCheck = Runnable {
+        if (!isLive) return@Runnable
+        if (android.os.Debug.getNativeHeapAllocatedSize() < recycleThresholdBytes) return@Runnable
+        recycleNativeMemory()
+    }
+
+    private fun scheduleMemoryCheck() {
+        mainHandler.removeCallbacks(memoryCheck)
+        mainHandler.postDelayed(memoryCheck, IDLE_BEFORE_RECYCLE_MS)
+    }
+
+    private fun recycleNativeMemory() {
+        val renderThread = scheduler ?: return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastRecycleAt < MIN_RECYCLE_GAP_MS) return
+        lastRecycleAt = now
+        renderThread.submit(RECYCLE_KEY, Int.MAX_VALUE - 1) {
+            val before = android.os.Debug.getNativeHeapAllocatedSize() shr 20
+            val done = session.recycle(context, password)
+            Log.i(TAG, "recycled=$done native ${before}MB -> ${android.os.Debug.getNativeHeapAllocatedSize() shr 20}MB")
+        }
+    }
+
+    /**
+     * The phone is short of memory, or the app has left the screen. Give back what can be rebuilt:
+     * rendered pages, pdfium's open pages, and — when nothing is unsaved — everything pdfium has
+     * piled up while reading.
+     */
+    fun onMemoryPressure(appHidden: Boolean) {
+        if (!isLive) return
+        val renderThread = scheduler ?: return
+        if (::cache.isInitialized) {
+            cache.trim()
+            if (!appHidden) notifyInvalidated()
+        }
+        lastRecycleAt = SystemClock.elapsedRealtime()
+        renderThread.submit(RECYCLE_KEY, Int.MIN_VALUE + 1) {
+            val before = android.os.Debug.getNativeHeapAllocatedSize() shr 20
+            session.releaseCachedPages()
+            val done = session.recycle(context, password)
+            Log.i(TAG, "memory pressure: recycled=$done native ${before}MB -> ${android.os.Debug.getNativeHeapAllocatedSize() shr 20}MB")
+        }
+    }
+
     fun release() {
         if (released) return
         released = true
+        mainHandler.removeCallbacks(memoryCheck)
         if (::measurer.isInitialized) measurer.stop()
         scheduler?.shutdown()
         if (::cache.isInitialized) cache.clear()
@@ -717,6 +779,13 @@ class DocumentController(
 
         const val TAG = "RapidPDF"
         const val RELEASE_PAGES_KEY = "release-cached-pages"
+        const val RECYCLE_KEY = "recycle-native-memory"
+
+        /** Quiet time before a reopen, so it never lands in the middle of a scroll. */
+        const val IDLE_BEFORE_RECYCLE_MS = 2_000L
+        const val MIN_RECYCLE_GAP_MS = 30_000L
+        const val RECYCLE_MIN_BYTES = 256L * 1024L * 1024L
+        const val RECYCLE_MAX_BYTES = 420L * 1024L * 1024L
         const val COVER_THUMBNAIL_KEY = "cover-thumbnail"
         const val MAX_EXTRACTED_FILES = 8
 

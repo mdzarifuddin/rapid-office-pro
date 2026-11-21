@@ -119,12 +119,12 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginHorizontal="6dp"
+        android:layout_marginHorizontal="4dp"
         android:layout_marginBottom="20dp"
         android:background="@drawable/bg_floating_toolbar"
         android:gravity="center_horizontal"
         android:orientation="vertical"
-        android:paddingHorizontal="6dp"
+        android:paddingHorizontal="4dp"
         android:paddingTop="4dp"
         android:paddingBottom="3dp">
 
@@ -247,6 +247,22 @@
                     <TextView
                         style="@style/ReaderBarLabel"
                         android:text="@string/label_lock" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/toolShareButton"
+                    style="@style/ReaderBarButton"
+                    android:contentDescription="@string/action_share_pages">
+
+                    <ImageView
+                        style="@style/ReaderBarIcon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_share"
+                        app:tint="#FFFFFFFF" />
+
+                    <TextView
+                        style="@style/ReaderBarLabel"
+                        android:text="@string/label_share" />
                 </LinearLayout>
 
 
@@ -373,6 +389,38 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/rangeButton"
+                    style="@style/ReaderBarButton"
+                    android:contentDescription="@string/action_select_range">
+
+                    <ImageView
+                        style="@style/ReaderBarIcon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_page_range"
+                        app:tint="#FFFFFFFF" />
+
+                    <TextView
+                        style="@style/ReaderBarLabel"
+                        android:text="@string/label_range" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/extractButton"
+                    style="@style/ReaderBarButton"
+                    android:contentDescription="@string/action_extract">
+
+                    <ImageView
+                        style="@style/ReaderBarIcon"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_pdf_new"
+                        app:tint="#FFFFFFFF" />
+
+                    <TextView
+                        style="@style/ReaderBarLabel"
+                        android:text="@string/label_new_pdf" />
+                </LinearLayout>
+
+                <LinearLayout
                     android:id="@+id/rotateLeftButton"
                     style="@style/ReaderBarButton"
                     android:contentDescription="@string/rotate_left">
@@ -469,37 +517,6 @@
                         android:text="@string/label_select_all" />
                 </LinearLayout>
 
-                <LinearLayout
-                    android:id="@+id/rangeButton"
-                    style="@style/ReaderBarButton"
-                    android:contentDescription="@string/action_select_range">
-
-                    <ImageView
-                        style="@style/ReaderBarIcon"
-                        android:contentDescription="@null"
-                        android:src="@drawable/ic_page_range"
-                        app:tint="#FFFFFFFF" />
-
-                    <TextView
-                        style="@style/ReaderBarLabel"
-                        android:text="@string/label_range" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:id="@+id/extractButton"
-                    style="@style/ReaderBarButton"
-                    android:contentDescription="@string/action_extract">
-
-                    <ImageView
-                        style="@style/ReaderBarIcon"
-                        android:contentDescription="@null"
-                        android:src="@drawable/ic_pdf_new"
-                        app:tint="#FFFFFFFF" />
-
-                    <TextView
-                        style="@style/ReaderBarLabel"
-                        android:text="@string/label_new_pdf" />
-                </LinearLayout>
 
                 <LinearLayout
                     android:id="@+id/editUndoButton"

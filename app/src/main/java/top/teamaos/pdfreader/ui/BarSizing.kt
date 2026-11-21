@@ -17,8 +17,10 @@ import android.widget.LinearLayout
  */
 object BarSizing {
 
-    private const val PORTRAIT_BUTTONS = 5
-    private const val PEEK_DP = 30
+    private const val PEEK_DP = 24
+
+    /** The bar's own side margin and padding (see activity_reader.xml), on each side. */
+    private const val BAR_SIDE_DP = 4 + 4
 
     fun attach(scroll: HorizontalScrollView, row: LinearLayout) {
         row.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> fit(scroll, row) }
@@ -38,23 +40,34 @@ object BarSizing {
         }
     }
 
-    /** Width of the first buttons that are showing, plus the peek; 0 before they are measured. */
+    /**
+     * Width that shows as many whole buttons as the screen has room for, plus a peek of the next;
+     * 0 before they are measured. As wide as the phone allows, so as many tools as possible are
+     * in view at once.
+     */
     private fun firstButtonsWidth(row: LinearLayout): Int {
-        var width = row.paddingLeft
-        var counted = 0
-        for (i in 0 until row.childCount) {
-            val child = row.getChildAt(i)
-            if (child.visibility == View.GONE) continue
-            if (child.width == 0) return 0
+        val metrics = row.resources.displayMetrics
+        val available = metrics.widthPixels - (2 * BAR_SIDE_DP * metrics.density).toInt()
+        val peek = (PEEK_DP * metrics.density).toInt()
+
+        val visible = (0 until row.childCount).map(row::getChildAt).filter { it.visibility != View.GONE }
+        if (visible.any { it.width == 0 }) return 0
+        fun widthOf(child: View): Int {
             val margins = child.layoutParams as? ViewGroup.MarginLayoutParams
-            width += child.width + (margins?.leftMargin ?: 0) + (margins?.rightMargin ?: 0)
-            counted++
-            if (counted == PORTRAIT_BUTTONS) {
-                // Nothing further to reveal: no need to cut the bar at all.
-                if (i == row.childCount - 1) return ViewGroup.LayoutParams.WRAP_CONTENT
-                return width + (PEEK_DP * row.resources.displayMetrics.density).toInt()
-            }
+            return child.width + (margins?.leftMargin ?: 0) + (margins?.rightMargin ?: 0)
         }
-        return ViewGroup.LayoutParams.WRAP_CONTENT
+
+        val everything = row.paddingLeft + row.paddingRight + visible.sumOf(::widthOf)
+        // Everything fits: no need to cut the bar at all.
+        if (everything <= available) return ViewGroup.LayoutParams.WRAP_CONTENT
+
+        var width = row.paddingLeft
+        var best = width
+        for (child in visible) {
+            width += widthOf(child)
+            if (width + peek > available) break
+            best = width + peek
+        }
+        return best
     }
 }

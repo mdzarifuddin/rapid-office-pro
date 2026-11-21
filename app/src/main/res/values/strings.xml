@@ -29,6 +29,7 @@
     <string name="action_search">Search</string>
     <string name="action_bookmark">Mark page</string>
     <string name="action_share">Share</string>
+    <string name="action_share_pages">Select pages and share</string>
     <string name="action_go_to_page">Go to page</string>
     <string name="action_outline">Contents</string>
     <string name="action_thumbnails">Thumbnails</string>
@@ -101,9 +102,14 @@
     <string name="discard">Discard</string>
     <string name="rotation_unavailable">Page rotation is not available on this device</string>
     <string name="action_extract">Make new PDF</string>
-    <string name="extract_title">%1$d pages selected</string>
+    <plurals name="extract_title">
+        <item quantity="one">%1$d page selected</item>
+        <item quantity="other">%1$d pages selected</item>
+    </plurals>
     <string name="extract_share">Share now</string>
     <string name="extract_save">Save to Downloads</string>
+    <string name="extract_save_short">Save</string>
+    <string name="extract_name_hint">File name</string>
     <string name="extract_failed">Could not build the new PDF</string>
     <string name="extract_saved">Saved to Downloads: %1$s</string>
     <string name="extract_working">Building new PDF…</string>
